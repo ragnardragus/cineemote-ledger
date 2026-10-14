@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { derivePasswordProof } from '../../frontend/src/auth/password.js'
 import { test as nodeTest, before, after } from 'node:test'
 
 const test = process.env.TEST_ADMIN_PASSWORD ? nodeTest : nodeTest.skip
@@ -132,9 +133,12 @@ test('UserCode autoriza uma única alteração e falhas não consomem o código'
 
 before(async () => {
   if (!process.env.TEST_ADMIN_PASSWORD) return
+  const username = process.env.TEST_ADMIN_USERNAME || 'ragnardragus'
+  const challenge = await (await fetch(`${base}/api/auth/challenge?username=${encodeURIComponent(username)}`)).json()
+  const proof = await derivePasswordProof(process.env.TEST_ADMIN_PASSWORD, challenge.salt, challenge.iterations)
   const response = await fetch(`${base}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'Cinemotes' },
-    body: JSON.stringify({ username: process.env.TEST_ADMIN_USERNAME || 'ragnardragus', password: process.env.TEST_ADMIN_PASSWORD }),
+    body: JSON.stringify({ username, proof }),
   })
   assert.equal(response.status, 200, 'Login para testes de integração')
   authCookie = response.headers.get('set-cookie').split(';')[0]

@@ -215,16 +215,17 @@ A rejeição retorna 400 e não consome o UserCode.
 As migrações `0005_create_auth.sql` e `0006_seed_admin.sql` criam Users,
 AuthSession e LoginThrottle e cadastram o administrador ragnardragus.
 A senha inicial definida na configuração do projeto é armazenada somente
-como hash bcrypt com salt e custo 12. Não há senha em texto puro no código.
+como verificador PBKDF2/SHA-256 após provisionamento privado. A senha inicial foi mantida.
 
 | Método | Rota | Descrição |
 | --- | --- | --- |
-| POST | `/api/auth/login` | Recebe username e password e inicia sessão |
+| POST | `/api/auth/login` | Recebe username e proof e inicia sessão |
 | GET | `/api/auth/me` | Retorna o usuário da sessão administrativa |
 | POST | `/api/auth/logout` | Revoga a sessão e remove o cookie |
 
 Login, logout e geração de UserCodes exigem `X-Requested-With: Cinemotes`.
-O login recebe JSON `{ "username": "...", "password": "..." }`.
+O login recebe JSON `{ "username": "...", "proof": "..." }` após a
+derivação da senha no navegador. Consulte o fluxo abaixo.
 O JWT HS256 fica no cookie cinemotes_session: HttpOnly, SameSite=Strict,
 Path=/api, duração de 8 horas e Secure quando acessado por HTTPS.
 O token não é retornado no JSON nem guardado em localStorage.
@@ -243,10 +244,76 @@ O segredo JWT local está em `.dev.vars`, ignorado pelo Git.
 Para outro ambiente local, copie `.dev.vars.example` para `.dev.vars` e
 preencha JWT_SECRET com um segredo aleatório de pelo menos 32 caracteres.
 Em produção, configure um segredo próprio com `npx wrangler secret put JWT_SECRET`.
-O banco de produção ainda precisa ser configurado antes de publicar.
+O banco de produção cinemotes-ledger-prod está configurado em wrangler.jsonc.
 
 Os testes unitários de autenticação usam SQLite isolado. Para executar
 os testes HTTP de emotes, inicie a API e defina TEST_ADMIN_PASSWORD em seu
 terminal antes de executar npm test. TEST_ADMIN_USERNAME é opcional e
 assume ragnardragus. Sem a senha, esses testes HTTP são pulados; os testes
 unitários continuam sendo executados. Nenhuma senha real está embutida nos testes.
+
+## Login e plano gratuito
+
+1. O cliente consulta `GET /api/auth/challenge?username=...` para obter
+   salt, iterações e algoritmo. Usuários desconhecidos recebem a mesma
+   estrutura de resposta, com salt fictício estável, sem revelar existência.
+2. O navegador deriva 32 bytes com PBKDF2-SHA256 e 600.000 iterações.
+3. Envia `POST /api/auth/login` com username e proof (64 caracteres hex),
+   sob HTTPS. A prova é uma credencial: não deve ser registrada em logs,
+   persistida no navegador nem compartilhada.
+4. A API calcula SHA-256 da prova e compara com o verificador armazenado
+   em tamanho fixo. O verificador do banco não pode ser usado como prova.
+5. JWT, cookies HttpOnly, limite de tentativas e revogação permanecem iguais.
+
+O Worker não executa bcrypt ou PBKDF2: o cálculo pesado ocorre no cliente.
+Isso evita o custo de bcryptjs no limite de 10 ms de CPU do Workers Free,
+sem diminuir as iterações de derivação. O funcionamento e o tempo de CPU
+em produção devem ser conferidos no painel após a primeira publicação.
+A senha inicial foi mantida no banco existente. Para um novo ambiente,
+provisione o administrador com o script abaixo, que atualiza somente
+o usuário informado e revoga suas sessões.
+Não existe fallback de autenticação com bcrypt na API.
+
+## Publicação integrada
+
+O wrangler.jsonc publica a API e os arquivos de ../frontend/dist no mesmo
+Worker cinemotes-ledger-api. /api/* passa pelo Worker; demais navegações
+usam a SPA, incluindo /login e /admin/usercodes.
+JWT_SECRET deve ser configurado como segredo de produção na Cloudflare.
+O segredo local em .dev.vars não é publicado nem deve ser versionado.
+
+No Workers Builds, usando a raiz do repositório:
+
+- Project name: cinemotes-ledger-api
+- Branch: main
+- Build command: npm ci --prefix frontend && npm run build --prefix frontend && npm ci --prefix functions
+- Deploy command: cd functions && npx wrangler deploy
+- Preview command: cd functions && npx wrangler versions upload
+
+Antes de cada publicação com novas migrações, execute em functions:
+
+```sh
+npx wrangler d1 migrations apply DB --remote
+```
+
+Para validar o bundle sem publicar, compile o frontend primeiro e execute
+npm run build em functions. O banco local continua usando wrangler.local.jsonc.
+
+## Provisionamento privado do administrador
+
+O D1 deste projeto já recebeu a credencial atualizada. O verificador gerado
+não é versionado. Para um banco novo, aplique as migrações e provisione o
+administrador uma única vez, antes do primeiro login:
+
+```powershell
+$adminPassword = Read-Host 'Senha do administrador' -AsSecureString
+$env:ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', $adminPassword).Password
+npm.cmd run admin:provision -- --remote
+Remove-Item Env:\ADMIN_PASSWORD
+```
+
+Use --local para desenvolvimento. ADMIN_USERNAME é opcional e assume
+ragnardragus. O script deriva a senha localmente, grava o verificador por
+um arquivo SQL temporário e remove esse arquivo ao terminar. Ele não
+imprime senha, prova ou verificador e não deve ser executado em cada build.
+Trocar a senha pelo script revoga as sessões anteriores desse usuário.

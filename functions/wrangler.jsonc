@@ -3,6 +3,20 @@
   "name": "cinemotes-ledger-api",
   "main": "src/index.js",
   "compatibility_date": "2026-10-13",
+  "workers_dev": true,
+  "assets": {
+    "directory": "../frontend/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cinemotes-ledger-prod",
+      "database_id": "bd5ef022-3034-4e25-b82f-271c769343a7",
+      "migrations_dir": "migrations"
+    }
+  ],
   "dev": {
     "port": 8787
   }

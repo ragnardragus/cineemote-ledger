@@ -21,6 +21,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Credencial gerada e já aplicada no D1; nunca publicar no repositório.
+functions/migrations/0007_admin_client_password.sql
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

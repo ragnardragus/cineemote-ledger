@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { compare } from 'bcryptjs'
+import { PASSWORD_ITERATIONS, dummySalt, parsePasswordRecord, verifyPasswordProof } from '../auth/password.js'
 import { setCookie, deleteCookie } from 'hono/cookie'
 import { sign } from 'hono/jwt'
 import { bodyLimit } from 'hono/body-limit'
@@ -9,14 +9,24 @@ const auth = new Hono()
 auth.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); return next() })
 auth.use('*', bodyLimit({ maxSize: 4096, onError: (c) => c.json({ error: 'Requisição muito grande' }, 413) }))
 
+auth.get('/challenge', async (c) => {
+  const username = c.req.query('username')?.trim()
+  if (!username || username.length > 64) return c.json({ error: 'Informe um usuário válido' }, 400)
+  const user = await c.env.DB.prepare('SELECT PasswordHash FROM Users WHERE Username = ? AND Active = 1').bind(username).first()
+  const parsed = parsePasswordRecord(user?.PasswordHash)
+  // Mesma resposta para usuários existentes e inexistentes, sem expor o verificador.
+  const salt = parsed?.salt || await dummySalt(username, getSecret(c))
+  return c.json({ salt, iterations: PASSWORD_ITERATIONS, algorithm: 'PBKDF2-SHA256' })
+})
+
 auth.post('/login', requireSameOrigin, async (c) => {
   if (!c.req.header('Content-Type')?.toLowerCase().startsWith('application/json')) {
-    return c.json({ error: 'Envie username e password em JSON' }, 400)
+    return c.json({ error: 'Envie username e proof em JSON' }, 400)
   }
   let body
   try { body = await c.req.json() } catch { return c.json({ error: 'JSON inválido' }, 400) }
   if (!body || typeof body.username !== 'string' || !body.username.trim() || body.username.length > 64
-    || typeof body.password !== 'string' || !body.password || new TextEncoder().encode(body.password).length > 72) {
+    || typeof body.proof !== 'string' || !/^[0-9a-f]{64}$/.test(body.proof)) {
     return c.json({ error: 'Informe usuário e senha válidos' }, 400)
   }
   const secret = getSecret(c)
@@ -35,8 +45,7 @@ auth.post('/login', requireSameOrigin, async (c) => {
     return c.json({ error: 'Muitas tentativas. Aguarde 15 minutos e tente novamente.' }, 429)
   }
   const user = await c.env.DB.prepare('SELECT * FROM Users WHERE Username = ? AND Active = 1').bind(username).first()
-  // Executa bcrypt também para usuários inexistentes, reduzindo diferenças de tempo.
-  const validPassword = await compare(body.password, user?.PasswordHash || '$2b$12$' + 'A'.repeat(53))
+  const validPassword = await verifyPasswordProof(body.proof, user?.PasswordHash)
   if (!user || !validPassword || user.Role !== 'ADMIN') {
     return c.json({ error: 'Usuário ou senha inválidos' }, 401)
   }

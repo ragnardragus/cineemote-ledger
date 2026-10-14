@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
-import { hash } from 'bcryptjs'
+import { derivePasswordProof } from '../../frontend/src/auth/password.js'
+import { createPasswordRecord } from '../src/auth/password.js'
 import { sign, decode } from 'hono/jwt'
 import app from '../src/index.js'
 import { TEST_SECRET } from './helpers/admin.js'
@@ -13,7 +14,9 @@ async function setup(t) {
   for (const migration of ['0003_create_user_code.sql', '0005_create_auth.sql']) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'))
   }
-  const passwordHash = await hash('test-password', 4)
+  const salt = '0123456789abcdef0123456789abcdef'
+  const proof = await derivePasswordProof('test-password', salt)
+  const passwordHash = await createPasswordRecord(proof, salt)
   sqlite.prepare('INSERT INTO Users (Id, Username, PasswordHash, Role) VALUES (?, ?, ?, ?)').run('test-user', 'admin', passwordHash, 'ADMIN')
   const DB = {
     prepare(sql) {
@@ -37,15 +40,26 @@ async function setup(t) {
     method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'Cinemotes', ...(cookie ? { Cookie: cookie } : {}), ...extraHeaders },
     body: body === undefined ? undefined : JSON.stringify(body),
   }, env)
-  const login = () => request('/api/auth/login', 'POST', { username: 'admin', password: 'test-password' })
+  const login = () => request('/api/auth/login', 'POST', { username: 'admin', proof })
   return { sqlite, env, request, login }
 }
 
 test('login JWT, geração restrita e logout que revoga a sessão', async (t) => {
   const { request, login, sqlite } = await setup(t)
+  // A derivação custosa não deve acontecer em nenhuma requisição do Worker.
+  t.mock.method(crypto.subtle, 'deriveBits', () => { throw new Error('PBKDF2 não deve rodar no Worker') })
   assert.equal((await request('/api/auth/me')).status, 401)
   assert.equal((await request('/api/usecode/generate', 'POST')).status, 401)
-  assert.equal((await request('/api/auth/login', 'POST', { username: 'admin', password: 'wrong' })).status, 401)
+  const challenge = await request('/api/auth/challenge?username=admin')
+  assert.equal(challenge.status, 200)
+  assert.equal(challenge.headers.get('Cache-Control'), 'no-store')
+  const parameters = await challenge.json()
+  assert.deepEqual(Object.keys(parameters).sort(), ['algorithm', 'iterations', 'salt'])
+  assert.equal(parameters.iterations, 600000)
+  const unknown = await request('/api/auth/challenge?username=unknown')
+  assert.equal(unknown.status, 200)
+  assert.deepEqual(Object.keys(await unknown.json()).sort(), Object.keys(parameters).sort())
+  assert.equal((await request('/api/auth/login', 'POST', { username: 'admin', proof: '0'.repeat(64) })).status, 401)
   const response = await login()
   assert.equal(response.status, 200)
   const body = await response.json()
@@ -88,13 +102,13 @@ test('rejeita JWT adulterado, expirado, claims incorretos e usuários sem acesso
 
 test('valida login, protege contra CSRF e limita tentativas', async (t) => {
   const { request, login } = await setup(t)
-  for (const body of [null, {}, { username: '', password: 'x' }, { username: 'admin', password: 1 }, { username: 'admin', password: 'x'.repeat(73) }]) {
+  for (const body of [null, {}, { username: '', proof: '0'.repeat(64) }, { username: 'admin', proof: 1 }, { username: 'admin', proof: 'x'.repeat(64) }, { username: 'admin', proof: '0'.repeat(63) }]) {
     assert.equal((await request('/api/auth/login', 'POST', body)).status, 400)
   }
   assert.equal((await request('/api/auth/login', 'POST', {}, undefined, { 'X-Requested-With': '' })).status, 403)
   assert.equal((await request('/api/auth/login', 'POST', {}, undefined, { 'Sec-Fetch-Site': 'cross-site' })).status, 403)
   assert.equal((await request('/api/auth/login', 'POST', {}, undefined, { 'Content-Type': 'text/plain' })).status, 400)
-  for (let i = 0; i < 5; i++) assert.equal((await request('/api/auth/login', 'POST', { username: 'admin', password: 'wrong' })).status, 401)
+  for (let i = 0; i < 5; i++) assert.equal((await request('/api/auth/login', 'POST', { username: 'admin', proof: '0'.repeat(64) })).status, 401)
   const limited = await login()
   assert.equal(limited.status, 429)
   assert.ok(Number(limited.headers.get('Retry-After')) > 0)

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "admin:provision": "node scripts/provision-admin.mjs",
     "test": "node --test",
     "dev": "wrangler dev --config wrangler.local.jsonc",
     "db:sql": "wrangler d1 execute DB --local --config wrangler.local.jsonc",
@@ -14,7 +15,6 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "bcryptjs": "^3.0.3",
     "hono": "^4.13.13"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AuthContext } from './context.js'
+import { derivePasswordProof } from './password.js'
 
 export default function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -36,10 +37,17 @@ export default function AuthProvider({ children }) {
   }
 
   async function login(username, password) {
+    const challengeResponse = await fetch(`/api/auth/challenge?username=${encodeURIComponent(username)}`, {
+      credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000),
+    })
+    const challenge = await challengeResponse.json().catch(() => null)
+    if (!challengeResponse.ok) throw new Error(challenge?.error || 'Não foi possível iniciar o login.')
+    if (challenge?.algorithm !== 'PBKDF2-SHA256') throw new Error('Parâmetros de autenticação inválidos')
+    const proof = await derivePasswordProof(password, challenge.salt, challenge.iterations)
     const response = await fetch('/api/auth/login', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'Cinemotes' },
-      body: JSON.stringify({ username, password }), signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ username, proof }), signal: AbortSignal.timeout(15000),
     })
     const data = await response.json().catch(() => null)
     if (!response.ok) throw new Error(data?.error || 'Não foi possível entrar.')

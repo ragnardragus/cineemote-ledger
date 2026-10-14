@@ -60,3 +60,12 @@ O administrador inicial é ragnardragus; a senha é a definida na configuração
 inicial, sem exibição ou preenchimento automático no frontend.
 Para publicar as rotas, o host deve encaminhar navegações da SPA para
 index.html e `/api` para o backend, no mesmo domínio.
+
+## Login otimizado para Workers Free
+
+A senha é derivada no navegador com Web Crypto (PBKDF2-SHA256, 600.000
+iterações). A API retorna somente os parâmetros públicos por
+GET /api/auth/challenge e verifica uma segunda hash da prova enviada.
+O processamento caro não é feito pelo Worker. A senha não muda e o
+JWT continua somente no cookie HttpOnly. É necessário HTTPS em produção;
+localhost funciona para desenvolvimento.
