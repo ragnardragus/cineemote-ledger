@@ -1,0 +1,6 @@
+CREATE TABLE UserCode (
+  UUID TEXT PRIMARY KEY NOT NULL,
+  Status TEXT NOT NULL DEFAULT 'GENERATED'
+    CHECK (Status IN ('GENERATED', 'EXPIRED', 'USED')),
+  CreationDate TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);

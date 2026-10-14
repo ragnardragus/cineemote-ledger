@@ -1,0 +1,21 @@
+CREATE TABLE Users (
+  Id TEXT PRIMARY KEY NOT NULL,
+  Username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  PasswordHash TEXT NOT NULL,
+  Role TEXT NOT NULL DEFAULT 'ADMIN' CHECK (Role IN ('ADMIN', 'USER')),
+  Active INTEGER NOT NULL DEFAULT 1 CHECK (Active IN (0, 1)),
+  CreationDate TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE AuthSession (
+  Id TEXT PRIMARY KEY NOT NULL,
+  UserId TEXT NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
+  ExpiresAt INTEGER NOT NULL
+);
+CREATE INDEX idx_auth_session_user ON AuthSession(UserId);
+
+CREATE TABLE LoginThrottle (
+  Bucket TEXT PRIMARY KEY NOT NULL,
+  Attempts INTEGER NOT NULL,
+  ResetAt INTEGER NOT NULL
+);

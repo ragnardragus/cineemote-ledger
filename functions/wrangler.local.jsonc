@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cinemotes-ledger-api-local",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-13",
+  "dev": {
+    "port": 8787
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cinemotes-ledger-dev",
+      // Identificador apenas local; não corresponde a um banco na Cloudflare.
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
