@@ -36,7 +36,7 @@ export default function AuthProvider({ children }) {
     return checkSession()
   }
 
-  async function login(username, password) {
+  async function login(username, password, role = 'ADMIN') {
     const challengeResponse = await fetch(`/api/auth/challenge?username=${encodeURIComponent(username)}`, {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000),
     })
@@ -44,7 +44,7 @@ export default function AuthProvider({ children }) {
     if (!challengeResponse.ok) throw new Error(challenge?.error || 'Não foi possível iniciar o login.')
     if (challenge?.algorithm !== 'PBKDF2-SHA256') throw new Error('Parâmetros de autenticação inválidos')
     const proof = await derivePasswordProof(password, challenge.salt, challenge.iterations)
-    const response = await fetch('/api/auth/login', {
+    const response = await fetch(role === 'CREATOR' ? '/api/auth/creator/login' : '/api/auth/login', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'Cinemotes' },
       body: JSON.stringify({ username, proof }), signal: AbortSignal.timeout(15000),
@@ -64,5 +64,7 @@ export default function AuthProvider({ children }) {
     setUser(null)
   }
 
-  return <AuthContext.Provider value={{ user, loading, error, login, logout, refresh, invalidate: () => setUser(null) }}>{children}</AuthContext.Provider>
+  const invalidate = useCallback(() => setUser(null), [])
+
+  return <AuthContext.Provider value={{ user, loading, error, login, logout, refresh, invalidate }}>{children}</AuthContext.Provider>
 }

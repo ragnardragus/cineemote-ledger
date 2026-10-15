@@ -3,7 +3,7 @@ import { PASSWORD_ITERATIONS, dummySalt, parsePasswordRecord, verifyPasswordProo
 import { setCookie, deleteCookie } from 'hono/cookie'
 import { sign } from 'hono/jwt'
 import { bodyLimit } from 'hono/body-limit'
-import { AUDIENCE, COOKIE_NAME, ISSUER, SESSION_SECONDS, cookieOptions, getSecret, requireAdmin, requireSameOrigin } from '../auth/security.js'
+import { CREATOR_AUDIENCE, requireAuthenticated, requireCreator, AUDIENCE, COOKIE_NAME, ISSUER, SESSION_SECONDS, cookieOptions, getSecret, requireSameOrigin } from '../auth/security.js'
 
 const auth = new Hono()
 auth.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); return next() })
@@ -19,7 +19,7 @@ auth.get('/challenge', async (c) => {
   return c.json({ salt, iterations: PASSWORD_ITERATIONS, algorithm: 'PBKDF2-SHA256' })
 })
 
-auth.post('/login', requireSameOrigin, async (c) => {
+async function login(c, role) {
   if (!c.req.header('Content-Type')?.toLowerCase().startsWith('application/json')) {
     return c.json({ error: 'Envie username e proof em JSON' }, 400)
   }
@@ -46,12 +46,12 @@ auth.post('/login', requireSameOrigin, async (c) => {
   }
   const user = await c.env.DB.prepare('SELECT * FROM Users WHERE Username = ? AND Active = 1').bind(username).first()
   const validPassword = await verifyPasswordProof(body.proof, user?.PasswordHash)
-  if (!user || !validPassword || user.Role !== 'ADMIN') {
+  if (!user || !validPassword || user.Role !== role) {
     return c.json({ error: 'Usuário ou senha inválidos' }, 401)
   }
   const sessionId = crypto.randomUUID()
   const exp = now + SESSION_SECONDS
-  const token = await sign({ sub: user.Id, jti: sessionId, iat: now, exp, iss: ISSUER, aud: AUDIENCE }, secret, 'HS256')
+  const token = await sign({ sub: user.Id, jti: sessionId, iat: now, exp, iss: ISSUER, aud: role === 'CREATOR' ? CREATOR_AUDIENCE : AUDIENCE }, secret, 'HS256')
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM LoginThrottle WHERE Bucket = ?').bind(bucket),
     c.env.DB.prepare('DELETE FROM AuthSession WHERE ExpiresAt <= ?').bind(now),
@@ -59,11 +59,14 @@ auth.post('/login', requireSameOrigin, async (c) => {
   ])
   setCookie(c, COOKIE_NAME, token, { ...cookieOptions(c), maxAge: SESSION_SECONDS })
   return c.json({ user: { id: user.Id, username: user.Username, role: user.Role } })
-})
+}
 
-auth.get('/me', requireAdmin, (c) => c.json({ user: c.get('admin') }))
+auth.post('/login', requireSameOrigin, (c) => login(c, 'ADMIN'))
+auth.post('/creator/login', requireSameOrigin, (c) => login(c, 'CREATOR'))
+auth.get('/creator/me', requireCreator, (c) => c.json({ user: c.get('user') }))
+auth.get('/me', requireAuthenticated, (c) => c.json({ user: c.get('user') }))
 
-auth.post('/logout', requireSameOrigin, requireAdmin, async (c) => {
+auth.post('/logout', requireSameOrigin, requireAuthenticated, async (c) => {
   await c.env.DB.prepare('DELETE FROM AuthSession WHERE Id = ?').bind(c.get('sessionId')).run()
   deleteCookie(c, COOKIE_NAME, cookieOptions(c))
   return c.body(null, 204)

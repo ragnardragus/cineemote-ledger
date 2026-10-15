@@ -11,7 +11,7 @@ import { TEST_SECRET } from './helpers/admin.js'
 async function setup(t) {
   const sqlite = new DatabaseSync(':memory:')
   t.after(() => sqlite.close())
-  for (const migration of ['0003_create_user_code.sql', '0005_create_auth.sql']) {
+  for (const migration of ['0003_create_user_code.sql', '0008_user_code_receiver.sql', '0009_user_code_receiver_required.sql', '0005_create_auth.sql']) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'))
   }
   const salt = '0123456789abcdef0123456789abcdef'
@@ -69,7 +69,7 @@ test('login JWT, geração restrita e logout que revoga a sessão', async (t) =>
   for (const property of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/api', 'Max-Age=28800']) assert.ok(setCookie.includes(property))
   const cookie = setCookie.split(';')[0]
   assert.equal((await request('/api/auth/me', 'GET', undefined, cookie)).status, 200)
-  const generated = await request('/api/usecode/generate', 'POST', { quantity: 15 }, cookie)
+  const generated = await request('/api/usecode/generate', 'POST', { quantity: 15, receiver: 'Cinemotes' }, cookie)
   assert.equal(generated.status, 201)
   assert.equal((await generated.json()).UUIDs.length, 15)
   assert.equal((await request('/api/usecode/generate', 'POST', {}, cookie, { 'X-Requested-With': '' })).status, 403)

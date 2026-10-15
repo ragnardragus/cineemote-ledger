@@ -1,9 +1,13 @@
+import Alert from '@mui/material/Alert'
+import Button from '@mui/material/Button'
+import Paper from '@mui/material/Paper'
+import FormInput from '../components/FormInput.jsx'
 import { useRef, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/context.js'
 import SiteLayout from '../components/SiteLayout.jsx'
 
-export default function Login() {
+export default function Login({ creator = false }) {
   const { user, loading, login } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -19,7 +23,7 @@ export default function Login() {
     setSending(true)
     setError('')
     try {
-      await login(username.trim(), password)
+      await login(username.trim(), password, creator ? 'CREATOR' : 'ADMIN')
       setPassword('')
     } catch (failure) {
       setError(failure instanceof TypeError || ['TimeoutError', 'AbortError'].includes(failure.name) ? 'Não foi possível conectar à API. Tente novamente.' : failure.message)
@@ -29,17 +33,16 @@ export default function Login() {
     }
   }
 
-  if (!loading && user) return <Navigate to="/admin/usercodes" replace />
+  if (!loading && user) return <Navigate to={user.role === 'CREATOR' ? '/my-emotes' : '/admin/usercodes'} replace />
   return <SiteLayout active="login"><main className="login-page">
-    <div className="intro"><span className="eyebrow">ÁREA ADMINISTRATIVA</span><h1>Acesso reservado.<br /><span>Ideias sem limites.</span></h1><p>Entre na sua conta para gerenciar os códigos da comunidade.</p></div>
-    <section className="code-card" aria-labelledby="login-title">
-      <div className="card-heading"><span className="key-icon" aria-hidden="true">⌘</span><div><h2 id="login-title">Entrar na administração</h2><p>Use seu usuário e senha.</p></div></div>
+    <div className="intro"><h1>{creator ? 'Acesso do criador.' : 'Acesso reservado.'}</h1></div>
+    <Paper component="section" variant="outlined" className="code-card" aria-labelledby="login-title">
+      <div className="card-heading"><span className="key-icon" aria-hidden="true">⌘</span><div><h2 id="login-title">{creator ? 'Entrar na sua conta' : 'Entrar na administração'}</h2><p>Use seu usuário e senha.</p></div></div>
       <form onSubmit={submit}><fieldset className="emote-fields" disabled={sending || loading}>
-        <div className="form-field"><label htmlFor="login-username">Usuário</label><input id="login-username" value={username} onChange={(event) => setUsername(event.target.value)} required autoComplete="username" maxLength={64} placeholder="Seu usuário" /></div>
-        <div className="form-field"><label htmlFor="login-password">Senha</label><div className="url-controls"><input id="login-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" placeholder="Sua senha" /><button type="button" className="preview-button" onClick={() => setShowPassword(!showPassword)} aria-pressed={showPassword}>{showPassword ? 'Ocultar' : 'Mostrar'}</button></div></div>
-        <button className="generate-button" type="submit"><span>{loading ? 'Verificando sessão…' : sending ? 'Entrando…' : 'Entrar'}</span><span aria-hidden="true">↗</span></button>
-      </fieldset>{error && <p className="error" role="alert">{error}</p>}</form>
-      <p className="card-note">A geração de UserCodes é exclusiva da administração.</p>
-    </section>
+        <div className="form-field"><label htmlFor="login-username">Usuário</label><FormInput id="login-username" value={username} onChange={(event) => setUsername(event.target.value)} required autoComplete="username" maxLength={64} placeholder="Seu usuário"  disabled={sending || loading}/></div>
+        <div className="form-field"><label htmlFor="login-password">Senha</label><div className="url-controls"><FormInput id="login-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" placeholder="Sua senha"  disabled={sending || loading}/><Button type="button" className="preview-button" onClick={() => setShowPassword(!showPassword)} disabled={sending || loading} aria-pressed={showPassword}>{showPassword ? 'Ocultar' : 'Mostrar'}</Button></div></div>
+        <Button variant="contained" color="primary" className="generate-button" type="submit" disabled={sending || loading}><span>{loading ? 'Verificando sessão…' : sending ? 'Entrando…' : 'Entrar'}</span><span aria-hidden="true">↗</span></Button>
+      </fieldset>{error && <Alert severity="error">{error}</Alert>}</form>
+    </Paper>
   </main></SiteLayout>
 }

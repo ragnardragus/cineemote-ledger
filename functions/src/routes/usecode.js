@@ -11,19 +11,23 @@ usecode.post('/generate', requireAdmin, requireSameOrigin, async (c) => {
       return c.json({ error: 'Corpo deve conter JSON válido' }, 400)
     }
     if (!body || Array.isArray(body) || typeof body !== 'object'
-      || Object.keys(body).some((key) => key !== 'quantity')
+      || Object.keys(body).some((key) => !['quantity', 'receiver'].includes(key))
       || !Number.isInteger(body.quantity) || body.quantity < 1 || body.quantity > 15) {
       return c.json({ error: 'quantity deve ser um inteiro entre 1 e 15' }, 400)
     }
+    if (typeof body.receiver !== 'string' || !body.receiver.trim() || body.receiver.length > 120) {
+      return c.json({ error: 'receiver é obrigatório e deve ter até 120 caracteres' }, 400)
+    }
+    const receiver = body.receiver.trim()
     for (let attempt = 0; attempt < 3; attempt++) {
       const uuids = Array.from({ length: body.quantity }, () => crypto.randomUUID())
       const creationDate = new Date().toISOString()
       try {
         // Um único INSERT: se houver colisão, nenhum código do lote é inserido.
         const { results } = await c.env.DB.prepare(
-          `INSERT INTO UserCode (UUID, Status, CreationDate) VALUES
-           ${uuids.map(() => "(?, 'GENERATED', ?)").join(', ')} RETURNING UUID`,
-        ).bind(...uuids.flatMap((uuid) => [uuid, creationDate])).all()
+          `INSERT INTO UserCode (UUID, Status, CreationDate, Receiver) VALUES
+           ${uuids.map(() => "(?, 'GENERATED', ?, ?)").join(', ')} RETURNING UUID`,
+        ).bind(...uuids.flatMap((uuid) => [uuid, creationDate, receiver])).all()
         c.header('Cache-Control', 'no-store')
         return c.json({ UUIDs: results.map((row) => row.UUID) }, 201)
       } catch (error) {
@@ -33,22 +37,7 @@ usecode.post('/generate', requireAdmin, requireSameOrigin, async (c) => {
     throw new Error('Não foi possível gerar um lote de UUIDs únicos após três tentativas')
   }
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const uuid = crypto.randomUUID()
-    const result = await c.env.DB.prepare(
-      `INSERT INTO UserCode (UUID, Status, CreationDate)
-       VALUES (?, 'GENERATED', ?)
-       ON CONFLICT (UUID) DO NOTHING
-       RETURNING UUID`,
-    ).bind(uuid, new Date().toISOString()).first()
-
-    if (result) {
-      c.header('Cache-Control', 'no-store')
-      return c.json({ UUID: result.UUID }, 201)
-    }
-  }
-
-  throw new Error('Não foi possível gerar um UUID único após três tentativas')
+  return c.json({ error: 'Informe quantity e receiver em um objeto JSON' }, 400)
 })
 
 usecode.post('/unlock', async (c) => {

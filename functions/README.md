@@ -1,319 +1,277 @@
-# API
+# API — Cinemotes Ledger
 
-Backend em JavaScript com Hono, executado no Cloudflare Workers.
-Esta pasta contém um Worker independente, não Pages Functions.
+API JavaScript com Hono, executada em um Cloudflare Worker independente. O banco usa o binding `DB`: SQLite local no desenvolvimento e Cloudflare D1 em produção. A publicação integrada também serve os arquivos de `frontend/dist/`.
 
-## Executar localmente
+## Preparação e comandos locais
+
+Execute nesta pasta, com Node.js 24 e npm:
 
 ```sh
-npm install
+npm ci
+npm run db:migrate
 npm run dev
 ```
 
-- `GET http://localhost:8787/`: retorna `{ "message": "Hello World" }`.
-- `GET http://localhost:8787/api/health`: retorna `{ "status": "ok" }`.
+Configure `JWT_SECRET` em `.dev.vars`, usando `.dev.vars.example` como modelo. Use um segredo aleatório de pelo menos 32 caracteres. O arquivo é ignorado pelo Git; a configuração remota do segredo é independente.
 
-## Validar o build
+A API local fica em `http://localhost:8787`. `GET /api/health` retorna `{ "status": "ok" }`.
 
-```sh
-npm run build
+| Comando | Finalidade |
+| --- | --- |
+| `npm run dev` | Inicia o Worker com `wrangler.local.jsonc`. |
+| `npm run db:migrate` | Aplica migrações no banco local. |
+| `npm run db:migration -- nome_da_migracao` | Cria um arquivo de migração. |
+| `npm run db:sql -- --command "SELECT * FROM channels"` | Executa SQL localmente. |
+| `npm run db:export -- --output=.wrangler/backup.sql` | Exporta estrutura e dados locais. |
+| `npm test` | Executa testes em bancos isolados. |
+| `npm run build` | Valida o bundle e gera `dist/`, sem publicar. |
+| `npm run deploy` | Publica usando `wrangler.jsonc`. |
+
+Compile o frontend antes do build ou deploy do Worker: a configuração de produção referencia `../frontend/dist`.
+
+## Banco e migrações
+
+`wrangler.local.jsonc` usa `cinemotes-ledger-dev`; os dados persistem em `.wrangler/state/`. `wrangler.jsonc` aponta para `cinemotes-ledger-prod`. Comandos `db:*` dos scripts usam o banco local; alterações remotas exigem `--remote` explicitamente.
+
+| Tabela | Campos e vínculos principais |
+| --- | --- |
+| `channels` | `id` UUID, `channelName`. |
+| `emotes` | `id` UUID, `emote_name`, `url`, `author`, `channelId` → `channels.id`. |
+| `Users` | `Id` UUID, `Username`, `PasswordHash`, `Role`, `Active`, `CreationDate`, `channelId` → `channels.id`. |
+| `UserCode` | `UUID`, `Status`, `CreationDate`, `Receiver`. |
+| `AuthSession` | `Id`, `UserId` → `Users.Id`, `ExpiresAt`. |
+| `LoginThrottle` | `Bucket`, `Attempts`, `ResetAt`. |
+
+Os perfis são `ADMIN` e `CREATOR`. Somente criadores podem ter canal vinculado. O perfil é imutável após o cadastro, e o banco impede excluir administradores.
+
+Novos nomes de canais e renomeações aceitam de 1 a 120 letras ASCII (`A-Z`, `a-z`) e números (`0-9`). Espaços, acentos e símbolos são rejeitados pela API e pelos triggers do banco. Registros anteriores à validação são preservados.
+
+### Evolução relevante
+
+| Migrações | Mudança |
+| --- | --- |
+| `0001`–`0006` | Esquema inicial, importação de 28 emotes, exemplos de UserCode e administrador histórico. |
+| `0008`–`0009` | Receiver obrigatório; códigos anteriores recebem Cinemotes como destinatário. |
+| `0010` | Recria os emotes com novos UUIDs, preservando os demais dados. |
+| `0011`–`0013` | Cria channels, inclui GlobalCE e adiciona o vínculo dos usuários. |
+| `0014` | Substitui o texto channel por channelId e vincula todos os emotes existentes ao GlobalCE. |
+| `0015` | Converte USER em CREATOR, protege perfis e administradores e encerra sessões existentes. |
+| `0016`–`0017` | Índice de busca por nome e validação dos nomes de canais. |
+
+Migrações históricas devem ser mantidas em ordem. Um arquivo privado de credencial (`0007_admin_client_password.sql`) pode existir no ambiente original, mas não é versionado; bancos novos usam o script de provisionamento abaixo.
+
+## Autenticação e autorização
+
+| Método | Rota | Acesso / finalidade |
+| --- | --- | --- |
+| GET | `/api/auth/challenge?username=...` | Público; parâmetros de derivação da senha. |
+| POST | `/api/auth/login` | Login exclusivo de ADMIN. |
+| POST | `/api/auth/creator/login` | Login exclusivo de CREATOR. |
+| GET | `/api/auth/me` | Restaura a sessão de qualquer um dos dois perfis. |
+| GET | `/api/auth/creator/me` | Exige sessão de criador. |
+| POST | `/api/auth/logout` | Revoga a sessão e remove o cookie. |
+
+O cliente consulta o challenge, deriva a senha com Web Crypto (PBKDF2-SHA256, 600.000 iterações) e envia `{ "username": "...", "proof": "..." }`. A API compara SHA-256 da prova com o verificador armazenado, sem executar a derivação custosa no Worker. A prova é uma credencial e não deve ser registrada ou persistida pelo cliente.
+
+O JWT usa HS256, com audiences distintas para administradores e criadores. A API verifica assinatura, emissor, audience, expiração, sessão registrada e usuário ativo. A autorização usa o perfil atual do banco.
+
+O token fica no cookie `cinemotes_session`: HttpOnly, SameSite=Strict, Path=/api, validade de oito horas e Secure em HTTPS. Não é retornado no JSON. Fechar o navegador não encerra a sessão; logout ou alteração de nome/senha revogam as sessões correspondentes.
+
+Login, logout e alterações administrativas exigem `X-Requested-With: Cinemotes`; requisições identificadas como cross-site são rejeitadas. O login limita tentativas por nome de usuário em uma janela de 15 minutos e retorna 429 com Retry-After ao exceder o limite.
+
+## Emotes
+
+| Método | Rota | Operação / sucesso |
+| --- | --- | --- |
+| GET | `/api/emotes` | Listagem pública; 200 com array. |
+| GET | `/api/emotes/:id` | Consulta pública por UUID; 200 com emote. |
+| GET | `/api/emotes/mine` | Apenas criador; emotes do canal da conta. |
+| POST | `/api/emotes` | Cadastro; 201 com emote e Location. |
+| PUT | `/api/emotes/:id` | Substituição dos campos; 200 com emote. |
+| PATCH | `/api/emotes/:id` | Atualização parcial; 200 com emote. |
+| DELETE | `/api/emotes/:id` | Exclusão; 204 sem corpo. |
+
+O banco guarda `channelId`, mas as respostas dos emotes retornam `channel` com o nome do canal. IDs são UUIDs v4; não são recebidos no body de cadastro.
+
+### Filtros da listagem
+
+```http
+GET /api/emotes
+GET /api/emotes?channel=MeuCanal
+GET /api/emotes?channel=MeuCanal&channelOnly=true
+GET /api/emotes?channel=GlobalCE&channelOnly=true
 ```
 
-Esse comando gera o bundle em `dist/` sem publicar na Cloudflare.
+- Sem `channel`: todos os emotes.
+- Com `channel`: emotes desse canal e de GlobalCE.
+- Com `channelOnly=true`: somente o canal informado.
+- `channelOnly` assume `false` e aceita somente `true` ou `false`; `true` exige `channel`.
+- Canal inexistente: somente GlobalCE, ou array vazio com `channelOnly=true`.
 
-## Publicar
+A busca por nome ignora maiúsculas/minúsculas ASCII e espaços nas extremidades do filtro. Um filtro vazio ou com mais de 120 caracteres retorna 400. A antiga rota POST `/api/emotes/list` não existe mais.
 
-```sh
-npx wrangler login
-npm run deploy
+`/api/emotes/mine` não usa esses filtros: consulta diretamente o channelId vinculado ao criador autenticado. Sem canal vinculado, retorna array vazio.
+
+### Cadastro com UserCode
+
+```http
+POST /api/emotes
+Content-Type: application/json
+UserCode: <UUID do código>
 ```
-
-Para chamar outras APIs, use o `fetch` nativo do Workers.
-
-## SQLite em desenvolvimento
-
-O Wrangler já inclui o SQLite usado pelo D1 local, sem instalar outro driver.
-`wrangler.local.jsonc` configura esse banco somente para desenvolvimento;
-`wrangler.jsonc` continua sendo a configuração de publicação, sem banco.
-Não é necessário criar banco ou fazer login na Cloudflare para usar o banco local.
-
-Os dados persistem em `.wrangler/state/`, ignorado pelo Git.
-Na API, o banco fica disponível por `c.env.DB`:
-
-```js
-const result = await c.env.DB.prepare('SELECT 1 AS ok').first()
-```
-
-Executar uma consulta:
-
-```sh
-npm run db:sql -- --command "SELECT 1 AS ok"
-```
-
-Criar uma migração, preencher o arquivo SQL gerado e aplicar:
-
-```sh
-npm run db:migration -- criar_tabelas
-npm run db:migrate
-```
-
-Exportar estrutura e dados:
-
-```sh
-npm run db:export -- --output=./backup.sql
-```
-
-## Tabela emotes
-
-### Rotas de CRUD
-
-| Método | Rota | Operação | Resposta de sucesso |
-| --- | --- | --- | --- |
-| GET | `/api/emotes` | Listar todos, ordenados por ID | 200, array de emotes |
-| GET | `/api/emotes/:id` | Consultar um emote | 200, emote |
-| POST | `/api/emotes` | Criar | 201, emote e cabeçalho Location |
-| PUT | `/api/emotes/:id` | Substituir os campos | 200, emote atualizado |
-| PATCH | `/api/emotes/:id` | Alterar apenas os campos enviados | 200, emote atualizado |
-| DELETE | `/api/emotes/:id` | Excluir | 204, sem corpo |
-
-Envie um objeto JSON em POST, PUT e PATCH. Exemplo para criar:
 
 ```json
 {
   "emote_name": "peepoHappy",
   "url": "https://example.com/peepoHappy.png",
-  "author": "",
-  "channel": "GlobalCE"
+  "author": "Nome do autor",
+  "channel": "MeuCanal"
 }
 ```
 
-POST e PUT exigem `emote_name`, `url` e `channel`. `author` é opcional e
-assume texto vazio quando omitido nesses métodos. PATCH exige ao menos um
-campo e preserva os demais. Todos os campos são textos; nome e canal não
-podem ser vazios e URL deve usar HTTP ou HTTPS. O ID é gerado pelo banco
-e não deve ser enviado no corpo. Campos desconhecidos são rejeitados.
+Nome, URL e canal são obrigatórios; author assume texto vazio se omitido. A API busca o canal pelo nome, reutiliza um existente ou cria um UUID e um novo registro. Criação do canal, do emote e consumo do código acontecem na mesma transação, inclusive sob concorrência.
 
-Erros retornam `{ "error": "mensagem" }`: 400 para dados ou ID inválidos,
-404 para emote inexistente e 500 para falhas internas.
-POST, PUT, PATCH e DELETE exigem o cabeçalho `UserCode` com o UUID de um
-código cujo status seja `GENERATED`. Exemplo:
+GlobalCE é reservado e não aceita novos emotes por esse cadastro. A API valida HTTP/HTTPS na URL, mas não baixa a imagem para verificar seu conteúdo.
 
-```http
-UserCode: ec627891-4f31-4f1d-8230-4e8fa552f59c
-```
+### Alteração e exclusão com UserCode
 
-Uma operação bem-sucedida altera o código para `USED`. A alteração do emote
-e o consumo acontecem na mesma transação, permitindo apenas uma operação
-por código, inclusive com chamadas simultâneas. Erros de validação, emote
-inexistente ou falhas no banco não consomem o código. Cabeçalho ausente ou
-vazio retorna 401; código inexistente, USED ou EXPIRED retorna 403.
-GET continua público. A autorização verifica o status armazenado; a regra
-de expiração de 24 horas continua sendo aplicada pela rota unlock.
+PUT recebe `emote_name`, `url` e `channelId`; `author` é opcional. PATCH recebe pelo menos um desses campos, preservando os demais. O canal informado por UUID deve existir.
 
-O CRUD depende do banco local
-configurado; o banco de produção será integrado quando for escolhido.
+Cada operação exige um UserCode com status `GENERATED`. Após uma alteração concluída, o código passa para `USED`. Falhas de validação e emotes inexistentes não consomem o código. Códigos usados, expirados ou inexistentes são rejeitados.
 
-### Testes
+### Operações com JWT do criador
 
-Com `npm run dev` ativo em outro terminal, execute `npm test` dentro desta
-pasta. Os testes de emotes usam a API HTTP e o SQLite real, criam registros
-temporários de emotes e os removem ao terminar. Também geram UserCodes
-para validar a autorização e o consumo. `API_URL` permite mudar a URL local utilizada.
+As mesmas rotas de escrita aceitam, como alternativa, o JWT do criador:
 
-### Migrações
+- Cookie de sessão mais `X-Requested-With: Cinemotes`.
+- Ou `Authorization: Bearer <token>`, validado explicitamente.
 
-As migrações `0001_create_emotes.sql` e `0002_seed_emotes.sql` criam a
-tabela e importam os 28 registros de `data/cinemotesCE.json`.
-Os campos são `id` (chave primária gerada automaticamente), `emote_name`,
-`url`, `author` e `channel`. Os valores do JSON são preservados,
-incluindo autores vazios.
+O criador deve estar ativo, com sessão válida e canal vinculado diferente de GlobalCE. Só pode cadastrar, alterar e excluir emotes do próprio canal, sem transferi-los para outro. A sessão e o vínculo são verificados no comando que altera os dados.
 
-Em uma instalação nova, execute `npm run db:migrate` para criar e popular
-o banco. O Wrangler registra as migrações aplicadas para não repetir a importação.
+No POST por sessão, `channel` pode ser omitido: o canal vem da conta. No PUT, `channelId` também pode ser omitido. Nenhum UserCode é consumido nesse fluxo. Um token administrativo não concede essas permissões de criador.
 
-```sh
-npm run db:sql -- --command "SELECT * FROM emotes ORDER BY id"
-```
+Se `UserCode` for enviado, ele tem prioridade; um código inválido não usa o JWT como fallback. No frontend, `/emotes/novo` sempre usa UserCode, enquanto o modal de Meus Emotes usa o cookie.
 
-## Tabela UserCode
+## UserCodes
 
-As migrações `0003_create_user_code.sql` e `0004_seed_user_code.sql`
-criam a tabela e inserem três registros de exemplo, um para cada status.
+### Gerar
 
-- `UUID`: texto, chave primária obrigatória e única. A aplicação deve gerar
-  novos UUIDs com `crypto.randomUUID()` antes de inserir.
-- `Status`: `GENERATED`, `EXPIRED` ou `USED`, validado pelo banco.
-  O valor padrão é `GENERATED`.
-- `CreationDate`: texto em formato ISO 8601 UTC, preenchido automaticamente
-  pelo banco ao inserir um registro sem informar esse campo.
-
-```sh
-npm run db:sql -- --command "SELECT * FROM UserCode ORDER BY CreationDate, UUID"
-```
-
-### Gerar código
-
-`POST /api/usecode/generate` não exige corpo. Gera um UUID v4 com
-`crypto.randomUUID()` nativo, grava `Status = GENERATED` e a data/hora
-atual em UTC, e retorna HTTP 201:
+`POST /api/usecode/generate` exige sessão administrativa e `X-Requested-With: Cinemotes`.
 
 ```json
-{ "UUID": "ec627891-4f31-4f1d-8230-4e8fa552f59c" }
+{ "quantity": 5, "receiver": "@destinatario" }
 ```
 
-A chave primária garante unicidade. Caso haja colisão, a API tenta gerar
-outro UUID, até três tentativas, sem alterar o registro existente.
-Falhas no banco ou esgotamento das tentativas retornam HTTP 500.
+`quantity` é um inteiro de 1 a 15. `receiver` é obrigatório e tem até 120 caracteres. Todos os códigos do lote recebem o destinatário informado, a mesma data UTC e status GENERATED.
 
-Para gerar de 1 a 15 códigos em uma única requisição, envie:
+Resposta 201:
 
 ```json
-{ "quantity": 15 }
+{ "UUIDs": ["uuid-1", "uuid-2", "uuid-3", "uuid-4", "uuid-5"] }
 ```
 
-A resposta HTTP 201 será `{ "UUIDs": ["uuid-1", "uuid-2", "..."] }`.
-`quantity` deve ser um número inteiro entre 1 e 15; valores inválidos
-retornam HTTP 400. Com corpo JSON, mesmo quantity igual a 1 retorna UUIDs.
-Sem corpo, a resposta antiga `{ "UUID": "..." }` é mantida.
-O lote é inserido em um único comando SQL, com status GENERATED e a mesma
-data de criação. Colisões provocam nova tentativa do lote inteiro;
-um lote com falha não deixa registros parcialmente inseridos.
+Mesmo um código retorna um array em UUIDs. Sem body, quantity ou receiver válido, retorna 400. A inserção do lote é atômica; colisões de UUID provocam nova tentativa do lote, até três vezes.
 
-### Usar código
+### Consumir ou expirar
 
-`POST /api/usecode/unlock` recebe:
+`POST /api/usecode/unlock` é público e recebe `{ "code": "UUID" }`.
 
-```json
-{ "code": "ec627891-4f31-4f1d-8230-4e8fa552f59c" }
-```
-
-| Caso | HTTP | Resposta JSON (`message`) |
+| Situação | HTTP | Resultado |
 | --- | --- | --- |
-| GENERATED com menos de 24 horas | 200 | `codigo usado com sucesso` |
-| GENERATED com 24 horas ou mais, ou já EXPIRED | 410 | `código expirado` |
-| Já USED | 409 | `código já foi usado` |
-| Código inexistente | 404 | `código inválido ou inexistente` |
-| JSON inválido, code ausente, vazio ou não textual | 400 | `código inválido ou inexistente` |
+| GENERATED há menos de 24 horas | 200 | Passa para USED. |
+| GENERATED há 24 horas ou mais | 410 | Passa para EXPIRED. |
+| Já EXPIRED | 410 | Mantém o estado. |
+| Já USED | 409 | Mantém o estado. |
+| Código inexistente | 404 | Código inválido ou inexistente. |
+| Body/código inválido | 400 | Código inválido ou inexistente. |
 
-A primeira chamada válida muda GENERATED para USED. Ao atingir 24 horas,
-GENERATED passa a EXPIRED. USED e EXPIRED permanecem nesses estados.
-A atualização é atômica para evitar dois usos simultâneos. CreationDate
-é preservada, e a expiração é verificada quando a rota é chamada.
+Essa rota responde com `message`. A janela de 24 horas é avaliada ao chamar unlock; as mutações de emotes verificam o status armazenado, sem expirar códigos automaticamente pela data.
 
-Para usar MySQL ou PostgreSQL
-em produção, será necessário adaptar o acesso ao banco e revisar o SQL das
-migrações e do arquivo exportado para o banco escolhido.
+## Usuários
 
-## Channel reservado
+Todas as rotas exigem ADMIN. POST, PATCH e DELETE também exigem `X-Requested-With: Cinemotes`.
 
-POST /api/emotes não permite cadastrar no channel GlobalCE, inclusive
-variações de maiúsculas/minúsculas ou espaços nas extremidades.
-A rejeição retorna 400 e não consome o UserCode.
-
-## Autenticação administrativa
-
-As migrações `0005_create_auth.sql` e `0006_seed_admin.sql` criam Users,
-AuthSession e LoginThrottle e cadastram o administrador ragnardragus.
-A senha inicial definida na configuração do projeto é armazenada somente
-como verificador PBKDF2/SHA-256 após provisionamento privado. A senha inicial foi mantida.
-
-| Método | Rota | Descrição |
+| Método | Rota | Operação |
 | --- | --- | --- |
-| POST | `/api/auth/login` | Recebe username e proof e inicia sessão |
-| GET | `/api/auth/me` | Retorna o usuário da sessão administrativa |
-| POST | `/api/auth/logout` | Revoga a sessão e remove o cookie |
+| GET | `/api/users` | Lista usuários sem credenciais. |
+| GET | `/api/users/:id` | Consulta por UUID. |
+| POST | `/api/users` | Cadastra ADMIN ou CREATOR. |
+| PATCH | `/api/users/:id` | Edita nome, canal ou credencial. |
+| DELETE | `/api/users/:id` | Exclui somente criadores. |
 
-Login, logout e geração de UserCodes exigem `X-Requested-With: Cinemotes`.
-O login recebe JSON `{ "username": "...", "proof": "..." }` após a
-derivação da senha no navegador. Consulte o fluxo abaixo.
-O JWT HS256 fica no cookie cinemotes_session: HttpOnly, SameSite=Strict,
-Path=/api, duração de 8 horas e Secure quando acessado por HTTPS.
-O token não é retornado no JSON nem guardado em localStorage.
-Assinatura, emissor, público, expiração e sessão registrada no banco são
-verificados pela API. O logout revoga o token; usuários inativos e sem
-papel ADMIN não acessam a geração. A API aplica cabeçalhos de segurança.
+O cadastro recebe `username`, `role`, `salt` e `proof`; criadores também exigem `channelName`. O username aceita de 3 a 64 letras, números, pontos, traços ou sublinhados. A criação de usuário e canal é uma transação. Administradores não recebem canal.
 
-`POST /api/usecode/generate` agora exige uma sessão administrativa válida,
-para a geração individual e em lote. Sem login retorna 401; usuário sem
-permissão ou requisição sem proteção contra CSRF retorna 403.
-Cadastro de emotes continua exigindo apenas o UserCode; unlock permanece público.
-O login bloqueia a conta temporariamente após cinco tentativas inválidas
-em uma janela de 15 minutos, com HTTP 429 e Retry-After.
+A edição aceita `username`, `channelName` e/ou o par `salt`/`proof`. Não aceita role ou channelId. Renomear o canal altera o registro já vinculado, preservando seu UUID e os vínculos dos emotes. Mudar nome ou senha revoga as sessões do usuário.
 
-O segredo JWT local está em `.dev.vars`, ignorado pelo Git.
-Para outro ambiente local, copie `.dev.vars.example` para `.dev.vars` e
-preencha JWT_SECRET com um segredo aleatório de pelo menos 32 caracteres.
-Em produção, configure um segredo próprio com `npx wrangler secret put JWT_SECRET`.
-O banco de produção cinemotes-ledger-prod está configurado em wrangler.jsonc.
+As respostas incluem id, username, role, active, creationDate, channelId e channelName, sem senha, prova ou verificador. Username duplicado retorna 409. A exclusão de administradores é bloqueada na API e no banco.
 
-Os testes unitários de autenticação usam SQLite isolado. Para executar
-os testes HTTP de emotes, inicie a API e defina TEST_ADMIN_PASSWORD em seu
-terminal antes de executar npm test. TEST_ADMIN_USERNAME é opcional e
-assume ragnardragus. Sem a senha, esses testes HTTP são pulados; os testes
-unitários continuam sendo executados. Nenhuma senha real está embutida nos testes.
+## Provisionamento do administrador
 
-## Login e plano gratuito
+As migrações incluem o administrador histórico `ragnardragus`, mas o login atual exige o verificador no formato de autenticação do projeto. Em um banco novo, aplique as migrações e provisione o administrador antes do primeiro login.
 
-1. O cliente consulta `GET /api/auth/challenge?username=...` para obter
-   salt, iterações e algoritmo. Usuários desconhecidos recebem a mesma
-   estrutura de resposta, com salt fictício estável, sem revelar existência.
-2. O navegador deriva 32 bytes com PBKDF2-SHA256 e 600.000 iterações.
-3. Envia `POST /api/auth/login` com username e proof (64 caracteres hex),
-   sob HTTPS. A prova é uma credencial: não deve ser registrada em logs,
-   persistida no navegador nem compartilhada.
-4. A API calcula SHA-256 da prova e compara com o verificador armazenado
-   em tamanho fixo. O verificador do banco não pode ser usado como prova.
-5. JWT, cookies HttpOnly, limite de tentativas e revogação permanecem iguais.
-
-O Worker não executa bcrypt ou PBKDF2: o cálculo pesado ocorre no cliente.
-Isso evita o custo de bcryptjs no limite de 10 ms de CPU do Workers Free,
-sem diminuir as iterações de derivação. O funcionamento e o tempo de CPU
-em produção devem ser conferidos no painel após a primeira publicação.
-A senha inicial foi mantida no banco existente. Para um novo ambiente,
-provisione o administrador com o script abaixo, que atualiza somente
-o usuário informado e revoga suas sessões.
-Não existe fallback de autenticação com bcrypt na API.
-
-## Publicação integrada
-
-O wrangler.jsonc publica a API e os arquivos de ../frontend/dist no mesmo
-Worker cinemotes-ledger-api. /api/* passa pelo Worker; demais navegações
-usam a SPA, incluindo /login e /admin/usercodes.
-JWT_SECRET deve ser configurado como segredo de produção na Cloudflare.
-O segredo local em .dev.vars não é publicado nem deve ser versionado.
-
-No Workers Builds, usando a raiz do repositório:
-
-- Project name: cinemotes-ledger-api
-- Branch: main
-- Build command: npm ci --prefix frontend && npm run build --prefix frontend && npm ci --prefix functions
-- Deploy command: cd functions && npx wrangler deploy
-- Preview command: cd functions && npx wrangler versions upload
-
-Antes de cada publicação com novas migrações, execute em functions:
-
-```sh
-npx wrangler d1 migrations apply DB --remote
-```
-
-Para validar o bundle sem publicar, compile o frontend primeiro e execute
-npm run build em functions. O banco local continua usando wrangler.local.jsonc.
-
-## Provisionamento privado do administrador
-
-O D1 deste projeto já recebeu a credencial atualizada. O verificador gerado
-não é versionado. Para um banco novo, aplique as migrações e provisione o
-administrador uma única vez, antes do primeiro login:
+Exemplo no PowerShell, dentro de `functions/`:
 
 ```powershell
 $adminPassword = Read-Host 'Senha do administrador' -AsSecureString
 $env:ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', $adminPassword).Password
-npm.cmd run admin:provision -- --remote
-Remove-Item Env:\ADMIN_PASSWORD
+try {
+  npm.cmd run admin:provision -- --local
+} finally {
+  Remove-Item Env:\ADMIN_PASSWORD
+}
 ```
 
-Use --local para desenvolvimento. ADMIN_USERNAME é opcional e assume
-ragnardragus. O script deriva a senha localmente, grava o verificador por
-um arquivo SQL temporário e remove esse arquivo ao terminar. Ele não
-imprime senha, prova ou verificador e não deve ser executado em cada build.
-Trocar a senha pelo script revoga as sessões anteriores desse usuário.
+`ADMIN_USERNAME` é opcional e assume `ragnardragus`. O script deriva a credencial, aplica SQL temporário e remove o arquivo ao finalizar, sem imprimir senha, prova ou verificador. Também revoga as sessões anteriores dessa conta. Use `--remote` somente para provisionar o D1 de produção; esse comando não faz parte do build habitual.
+
+## Testes
+
+```sh
+npm test
+```
+
+Testes unitários usam SQLite em memória; testes HTTP usam o runtime do Worker com um D1 temporário e persistência desativada. Não exigem a API local rodando nem senha real de administrador. O ambiente é encerrado ao final da suíte. Os UserCodes de teste recebem um identificador no Receiver e são removidos no encerramento da bateria de emotes.
+
+A cobertura inclui autenticação, permissões por perfil/canal, tokens inválidos e revogados, CSRF, CRUD, consumo único de UserCodes, concorrência, filtros e migrações.
+
+## Publicação na Cloudflare
+
+A configuração `wrangler.jsonc` publica API e SPA no Worker `cinemotes-ledger-api`, com binding `DB` para `cinemotes-ledger-prod`. Para outra conta ou banco, ajuste nome e identificador do D1 antes de publicar.
+
+A configuração de assets usa `single-page-application`; `/api/*` é processado primeiro pelo Worker. O proxy do Vite não participa da publicação.
+
+1. Na raiz do repositório, instale as dependências e compile o frontend:
+
+   ```sh
+   npm ci --prefix frontend
+   npm run build --prefix frontend
+   npm ci --prefix functions
+   ```
+
+2. Dentro de `functions/`, autentique o Wrangler e configure o segredo do ambiente:
+
+   ```sh
+   npx wrangler login
+   npx wrangler secret put JWT_SECRET
+   ```
+
+3. Aplique as migrações remotas:
+
+   ```sh
+   npx wrangler d1 migrations apply DB --remote
+   ```
+
+   A configuração do binding não aplica migrações automaticamente. Em uma base nova, provisione também o administrador com `--remote`, conforme a seção anterior.
+
+4. Valide e publique:
+
+   ```sh
+   npm run build
+   npm run deploy
+   ```
+
+No Workers Builds, com raiz do repositório e branch `main`:
+
+- Build command: `npm ci --prefix frontend && npm run build --prefix frontend && npm ci --prefix functions`
+- Deploy command: `cd functions && npx wrangler deploy`
+
+As migrações e o provisionamento são etapas separadas do build. `.dev.vars` e o banco local não são enviados à produção.

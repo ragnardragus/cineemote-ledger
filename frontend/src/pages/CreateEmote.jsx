@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import Alert from '@mui/material/Alert'
+import Button from '@mui/material/Button'
+import Paper from '@mui/material/Paper'
+import FormInput from '../components/FormInput.jsx'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import SiteLayout from '../components/SiteLayout.jsx'
 
 const emptyForm = { emote_name: '', url: '', author: '', channel: '', code: '' }
 
-export default function CreateEmote() {
+export default function CreateEmote({ administrative = false }) {
+  const Layout = administrative ? Fragment : SiteLayout
   const [form, setForm] = useState(emptyForm)
   const [preview, setPreview] = useState(null)
   const [error, setError] = useState('')
@@ -45,12 +50,8 @@ export default function CreateEmote() {
     setError('')
     setSuccess('')
     const values = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()]))
-    if (!values.emote_name || !values.url || !values.channel || !values.code) {
+    if (!values.emote_name || !values.url || (!values.channel || !values.code)) {
       setError('Preencha todos os campos obrigatórios.')
-      return
-    }
-    if (values.channel.toLowerCase() === 'globalce') {
-      setError('Não é permitido cadastrar emotes no channel GlobalCE.')
       return
     }
     if (!preview || preview.status !== 'loaded') {
@@ -62,7 +63,7 @@ export default function CreateEmote() {
     try {
       const { code, ...body } = values
       const response = await fetch('/api/emotes', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', UserCode: code },
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'Cinemotes', UserCode: code },
         body: JSON.stringify(body), signal: AbortSignal.timeout(15000),
       })
       const data = await response.json().catch(() => null)
@@ -79,24 +80,24 @@ export default function CreateEmote() {
     }
   }
 
-  return <SiteLayout active="emotes"><main className="emote-page">
-    <div className="intro"><span className="eyebrow">MAIS EXPRESSÃO PARA A COMUNIDADE</span><h1>Um novo emote.<br /><span>Uma nova reação.</span></h1><p>Escolha a imagem, preencha os detalhes e use seu código para cadastrar.</p></div>
-    <section className="code-card" aria-labelledby="form-title">
-      <div className="card-heading"><span className="key-icon" aria-hidden="true">✦</span><div><h2 id="form-title">Cadastrar emote</h2><p>Campos com * são obrigatórios.</p></div></div>
+  return <Layout><main className="emote-page">
+    <div className="intro"><h1>Cadastrar um novo emote.</h1><p>Escolha a imagem, preencha os detalhes e use seu código para cadastrar.</p></div>
+    <Paper component="section" variant="outlined" className="code-card" aria-labelledby="form-title">
+      <div className="card-heading"><span className="key-icon" aria-hidden="true">✦</span><div><h2 id="form-title">Cadastrar Emote</h2></div></div>
       <form onSubmit={submit}><fieldset className="emote-fields" disabled={saving}>
-        <div className="form-field"><label htmlFor="emote-name">Nome do emote *</label><input id="emote-name" name="emote_name" value={form.emote_name} onChange={change} required placeholder="Ex.: peepoHappy" autoComplete="off" /></div>
-        <div className="form-field"><label htmlFor="emote-url">URL da imagem *</label><div className="url-controls"><input id="emote-url" name="url" value={form.url} onChange={change} required type="url" placeholder="https://.../emote.gif" aria-describedby="url-help" /><button type="button" className="preview-button" onClick={loadPreview} disabled={!form.url.trim() || previewStatus === 'loading'}>{previewStatus === 'loading' ? 'Carregando…' : 'Carregar imagem'}</button></div><p id="url-help" className="field-help">Use o link direto de uma imagem, como GIF ou PNG. Carregue a prévia para validar.</p></div>
+        <div className="form-field"><label htmlFor="emote-name">Nome do emote *</label><FormInput id="emote-name" name="emote_name" value={form.emote_name} onChange={change} required placeholder="Ex.: peepoHappy" autoComplete="off"  disabled={saving}/></div>
+        <div className="form-field"><label htmlFor="emote-url">URL da imagem *</label><div className="url-controls"><FormInput id="emote-url" name="url" value={form.url} onChange={change} required type="url" placeholder="https://.../emote.gif" aria-describedby="url-help"  disabled={saving}/><Button type="button" className="preview-button" onClick={loadPreview} disabled={!form.url.trim() || previewStatus === 'loading'}>{previewStatus === 'loading' ? 'Carregando…' : 'Carregar imagem'}</Button></div><p id="url-help" className="field-help">Use o link direto de uma imagem, como GIF ou PNG. Carregue a prévia para validar.</p></div>
         <div className={`image-preview ${previewStatus === 'loaded' ? 'has-image' : ''}`}>
           {preview && previewStatus !== 'error' && <img key={preview.url} src={preview.url} alt="Prévia do emote" referrerPolicy="no-referrer" style={{ display: previewStatus === 'loaded' ? 'block' : 'none' }} onLoad={(event) => { if (event.currentTarget.naturalWidth) setPreview((current) => current?.url === preview.url && current.status === 'loading' ? { ...current, status: 'loaded' } : current) }} onError={() => setPreview((current) => current?.url === preview.url ? { ...current, status: 'error' } : current)} />}
           <div role="status" aria-live="polite">{previewStatus === 'loaded' ? 'Imagem carregada' : previewStatus === 'loading' ? 'Carregando prévia…' : previewStatus === 'error' ? 'Não foi possível carregar uma imagem dessa URL. Confira o link e tente novamente.' : 'A prévia da imagem aparecerá aqui.'}</div>
         </div>
         <div className="form-columns">
-          <div className="form-field"><label htmlFor="emote-author">Author <span className="optional">opcional</span></label><input id="emote-author" name="author" value={form.author} onChange={change} placeholder="Nome do autor" /></div>
-          <div className="form-field"><label htmlFor="emote-channel">Channel *</label><input id="emote-channel" name="channel" value={form.channel} onChange={change} required placeholder="Nome do canal" aria-describedby="channel-help" /><p id="channel-help" className="field-help">O channel GlobalCE é reservado.</p></div>
+          <div className="form-field"><label htmlFor="emote-author">Author</label><FormInput id="emote-author" name="author" value={form.author} onChange={change} placeholder="Nome do autor"  disabled={saving}/></div>
+          <div className="form-field"><label htmlFor="emote-channel">Nome do canal *</label><FormInput id="emote-channel" name="channel" pattern="[A-Za-z0-9]{1,120}" title="Use apenas letras de A a Z e números, sem espaços ou caracteres especiais." value={form.channel} onChange={change} required placeholder="Nome do canal" maxLength={120} aria-describedby="channel-help"  disabled={saving}/><p id="channel-help" className="field-help">Use apenas letras de A a Z e números, sem espaços ou caracteres especiais. Se o canal não existir, ele será criado. O canal GlobalCE é reservado.</p></div>
         </div>
-        <div className="form-field"><label htmlFor="emote-code">Código (UserCode) *</label><input id="emote-code" name="code" value={form.code} onChange={change} required placeholder="Cole seu UUID aqui" autoComplete="off" spellCheck="false" className="uuid-input" /><p className="field-help">O código será consumido após o cadastro. Solicite um código à administração.</p></div>
-        <button className="generate-button" type="submit"><span>{saving ? 'Cadastrando…' : 'Cadastrar emote'}</span><span aria-hidden="true">↗</span></button>
-      </fieldset>{error && <p className="error" role="alert">{error}</p>}{success && <p className="success-message" role="status">{success}</p>}</form>
-    </section>
-  </main></SiteLayout>
+        <div className="form-field"><label htmlFor="emote-code">Código (UserCode) *</label><FormInput id="emote-code" name="code" value={form.code} onChange={change} required placeholder="Cole seu UUID aqui" autoComplete="off" spellCheck="false" className="uuid-input"  disabled={saving}/><p className="field-help">O código será consumido após o cadastro. Solicite um código à administração.</p></div>
+        <div className="user-form-actions"><Button variant="contained" color="primary" size="small" type="submit" disabled={saving}>{saving ? 'Cadastrando…' : 'Cadastrar emote'}</Button></div>
+      </fieldset>{error && <Alert severity="error">{error}</Alert>}{success && <Alert severity="success" role="status">{success}</Alert>}</form>
+    </Paper>
+  </main></Layout>
 }

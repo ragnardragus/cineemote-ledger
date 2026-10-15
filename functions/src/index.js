@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import emotes from './routes/emotes.js'
 import usecode from './routes/usecode.js'
 import auth from './routes/auth.js'
+import users from './routes/users.js'
 import { secureHeaders } from 'hono/secure-headers'
 
 const app = new Hono()
@@ -12,6 +13,7 @@ app.get('/api/health', (c) => c.json({ status: 'ok' }))
 app.route('/api/emotes', emotes)
 app.route('/api/usecode', usecode)
 app.route('/api/auth', auth)
+app.route('/api/users', users)
 
 app.onError((error, c) => {
   console.error(error)
