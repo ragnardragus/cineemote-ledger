@@ -57,19 +57,21 @@ Componentes Material UI são importados diretamente por caminho. O Vite faz a va
 
 ## Cadastro com UserCode
 
-`CreateEmote` atende `/emotes/novo` e `/admin/emotes/novo`. Sempre exige nome, URL, canal e UserCode; autor é opcional. Estar logado como criador não muda esse fluxo.
+`CreateEmote` atende `/emotes/novo` e `/admin/emotes/novo`. Sempre exige nome, URL, canal e UserCode. O consumer é preenchido automaticamente pela API. Estar logado como criador não muda esse fluxo.
 
-O botão Carregar imagem exibe uma prévia e bloqueia o envio até a imagem carregar. Alterar a URL invalida a prévia. A API valida o formato HTTP/HTTPS, mas a verificação de que o conteúdo carrega como imagem acontece no navegador.
+O seletor compartilhado `EmoteImagePicker` oferece Enviar arquivo e Usar link. Ao escolher um arquivo ou clicar em Verificar imagem, apresenta um resumo com miniatura, nome, dimensões, tamanho em KB quando disponível e ações Substituir/Remover. A prévia confere dimensões no navegador; arquivos também passam por conferência local de assinatura e tamanho. Links não exibem tamanho estimado: a API faz essa verificação ao salvar. Alterar a origem ou o link invalida a prévia. A API verifica GIF, JPG/JPEG ou PNG pelos bytes do arquivo, no máximo 1.048.576 bytes e largura e altura de até 200 pixels. Erros aparecem no formulário e não consomem UserCode.
 
 O envio usa `POST /api/emotes` com `UserCode` no cabeçalho. O nome do canal aceita somente letras ASCII e números, até 120 caracteres; GlobalCE é reservado. A API reutiliza um canal pelo nome ou cria um novo e consome o código após cadastrar.
 
 ## Meus Emotes
 
+Os formulários de cadastro público e o modal do criador oferecem **Usar link** e **Enviar arquivo**. No upload, o navegador envia `multipart/form-data` com o campo `image`, sem definir Content-Type manualmente. O arquivo tem prévia local e a API aplica a validação definitiva. No modal de edição, é possível substituir a imagem por outro arquivo ou por uma URL; editar apenas o nome mantém o arquivo atual.
+
 `MyEmotes` consulta `GET /api/emotes/mine`, protegido pelo JWT do criador. O servidor determina o canal pela conta autenticada.
 
 - Sem emotes: container com altura mínima e cartão **+** centralizado.
 - Com emotes: grade responsiva e cartão **+** para adicionar mais.
-- **+**: abre `CreatorEmoteDialog` com nome, URL e autor opcional; usa a sessão, sem canal ou UserCode no formulário.
+- **+**: abre `CreatorEmoteDialog` com nome e URL; usa a sessão, sem canal ou UserCode no formulário.
 - Clique em um emote: abre o menu Alterar/Excluir na posição do mouse.
 - Alterar: preenche o mesmo modal e salva com PATCH.
 - Excluir: pede confirmação em `DeleteEmoteDialog` antes de enviar DELETE.
@@ -80,7 +82,7 @@ A grade é atualizada ao concluir as operações. A abertura dos cartões de adi
 
 `Users` contém somente a listagem. O botão **+ Novo usuário** fica no cabeçalho do card. `UserForm` atende cadastro e edição em rotas separadas; salvar ou cancelar volta para a lista. Alterar nome ou senha da própria conta exige novo login.
 
-Administradores e criadores são escolhidos no cadastro. Na edição, o perfil é apenas informativo. O canal é informado por nome para criadores; o cadastro cria o canal e a edição renomeia o vínculo existente. Administradores não podem ser excluídos: a ação aparece desabilitada, com a dica Exclusão bloqueada.
+Administradores e criadores são escolhidos no cadastro. Na edição, o perfil é apenas informativo. O canal é informado por nome: o cadastro reutiliza um canal sem dono ou cria um se o nome não existir. Canal de outro criador retorna conflito. A edição renomeia o vínculo existente, preserva o UUID e bloqueia nomes já usados por outro canal. Administradores não podem ser excluídos: a ação aparece desabilitada, com a dica Exclusão bloqueada.
 
 A página `UserCodes` envia `{ "quantity": 5, "receiver": "@destinatario" }`, recebe `{ "UUIDs": ["..."] }` e permite copiar um código ou o lote inteiro.
 

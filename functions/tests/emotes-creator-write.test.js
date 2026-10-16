@@ -34,10 +34,26 @@ test('criador cadastra, altera e exclui seus emotes por cookie sem consumir User
   assert.equal(created.status, 201)
   const emote = await created.json()
   assert.equal(emote.channel, 'CreatorOwn')
+  assert.equal(emote.consumer, 'emote_creator')
+  assert.equal(emote.createdWithUserCode, false)
+  for (const filename of ['oversize.png', 'large.png', 'not-image.png']) {
+    const body = { ...payload, url: `https://example.com/${filename}` }
+    assert.equal((await send('/api/emotes', 'POST', body, headers)).status, 400)
+    for (const method of ['PATCH', 'PUT']) assert.equal((await send(`/api/emotes/${emote.id}`, method, body, headers)).status, 400)
+    assert.deepEqual(await (await send(`/api/emotes/${emote.id}`, 'GET', undefined, headers)).json(), emote)
+  }
+  for (const field of ['author', 'consumer', 'createdWithUserCode']) {
+    assert.equal((await send('/api/emotes', 'POST', { ...payload, [field]: 'forged' }, headers)).status, 400)
+    assert.equal((await send(`/api/emotes/${emote.id}`, 'PATCH', { [field]: 'forged' }, headers)).status, 400)
+  }
   assert.equal((await api.DB.prepare('SELECT channelId FROM emotes WHERE id = ?').bind(emote.id).first()).channelId, ownChannel)
   const route = `/api/emotes/${emote.id}`
-  assert.equal((await send(route, 'PATCH', { author: 'Creator' }, headers)).status, 200)
-  assert.equal((await send(route, 'PUT', { ...payload, emote_name: 'Replaced' }, headers)).status, 200)
+  assert.equal((await send(route, 'PATCH', { emote_name: 'Creator' }, headers)).status, 200)
+  const replaced = await send(route, 'PUT', { ...payload, emote_name: 'Replaced' }, headers)
+  assert.equal(replaced.status, 200)
+  const updated = await replaced.json()
+  assert.equal(updated.consumer, emote.consumer)
+  assert.equal(updated.createdWithUserCode, false)
   assert.equal((await send(route, 'DELETE', undefined, headers)).status, 204)
   assert.deepEqual(await api.DB.prepare('SELECT COUNT(*) AS n FROM UserCode').first(), before)
 })
@@ -58,7 +74,7 @@ test('JWT não autoriza outros canais, GlobalCE ou transferência de emotes', as
     assert.equal((await send(route, method, { ...payload, channelId: otherChannel }, headers)).status, 403)
   }
   const foreignId = crypto.randomUUID()
-  await api.DB.prepare('INSERT INTO emotes (id, emote_name, url, channelId) VALUES (?, ?, ?, ?)').bind(foreignId, 'Other', payload.url, otherChannel).run()
+  await api.DB.prepare("INSERT INTO emotes (id, emote_name, url, channelId, consumer, createdWithUserCode) VALUES (?, ?, ?, ?, 'fixture', 0)").bind(foreignId, 'Other', payload.url, otherChannel).run()
   const global = await api.DB.prepare("SELECT emotes.id FROM emotes JOIN channels ON channels.id = emotes.channelId WHERE channelName = 'GlobalCE' LIMIT 1").first()
   for (const id of [foreignId, global.id]) {
     for (const method of ['PATCH', 'PUT', 'DELETE']) {
@@ -76,7 +92,7 @@ test('Bearer válido funciona; cookie exige proteção CSRF; JWT expirado ou rev
   const created = await send('/api/emotes', 'POST', payload, { Authorization: `Bearer ${token}` })
   assert.equal(created.status, 201)
   const emote = await created.json()
-  assert.equal((await send(`/api/emotes/${emote.id}`, 'PATCH', { author: 'Bearer' }, { Authorization: `Bearer ${token}` })).status, 200)
+  assert.equal((await send(`/api/emotes/${emote.id}`, 'PATCH', { emote_name: 'Bearer' }, { Authorization: `Bearer ${token}` })).status, 200)
   const expired = await sign({ ...decode(token).payload, exp: Math.floor(Date.now() / 1000) - 1 }, api.secret, 'HS256')
   for (const authorization of ['Bearer invalid', 'Basic invalid', `Bearer ${expired}`]) {
     assert.equal((await send('/api/emotes', 'POST', payload, { Authorization: authorization })).status, 401)

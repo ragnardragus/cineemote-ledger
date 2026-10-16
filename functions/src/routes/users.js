@@ -16,6 +16,8 @@ users.use('*', async (c, next) => ['POST', 'PATCH', 'DELETE'].includes(c.req.met
 users.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status)
   if (String(error.message).includes('UNIQUE constraint failed: Users.Username')) return c.json({ error: 'Nome de usuário já cadastrado' }, 409)
+  if (String(error.message).includes('idx_channels_name_unique')) return c.json({ error: 'Já existe um canal com esse nome' }, 409)
+  if (String(error.message).includes('UNIQUE constraint failed: Users.channelId')) return c.json({ error: 'Este canal já pertence a outro criador' }, 409)
   console.error(error)
   return c.json({ error: 'Não foi possível concluir a operação' }, 500)
 })
@@ -59,11 +61,18 @@ users.get('/:id', async (c) => c.json(await find(c)))
 users.post('/', async (c) => {
   const body = await readBody(c, true)
   const id = crypto.randomUUID()
-  const channelId = body.role === 'CREATOR' ? crypto.randomUUID() : null
   const statements = []
-  if (channelId) statements.push(c.env.DB.prepare('INSERT INTO channels (id, channelName) VALUES (?, ?)').bind(channelId, body.channelName))
-  statements.push(c.env.DB.prepare('INSERT INTO Users (Id, Username, PasswordHash, Role, channelId) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, body.username, body.passwordHash, body.role, channelId))
+  if (body.role === 'CREATOR') {
+    statements.push(c.env.DB.prepare(`INSERT INTO channels (id, channelName)
+      SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM channels WHERE lower(trim(channelName)) = lower(?))`)
+      .bind(crypto.randomUUID(), body.channelName, body.channelName))
+    statements.push(c.env.DB.prepare(`INSERT INTO Users (Id, Username, PasswordHash, Role, channelId)
+      VALUES (?, ?, ?, ?, (SELECT id FROM channels WHERE lower(trim(channelName)) = lower(?)))`)
+      .bind(id, body.username, body.passwordHash, body.role, body.channelName))
+  } else {
+    statements.push(c.env.DB.prepare('INSERT INTO Users (Id, Username, PasswordHash, Role, channelId) VALUES (?, ?, ?, ?, NULL)')
+      .bind(id, body.username, body.passwordHash, body.role))
+  }
   await c.env.DB.batch(statements)
   c.header('Location', `/api/users/${id}`)
   return c.json(await c.env.DB.prepare(`${userSelect} WHERE Users.Id = ?`).bind(id).first(), 201)

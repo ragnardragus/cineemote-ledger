@@ -153,7 +153,7 @@ footer > span:last-child > span { color: var(--cinemotes-gold); }
 .global-emote-image { display: grid; place-items: center; width: 100%; height: 100px; }
 .global-emote-image img { display: block; width: auto; height: auto; max-width: 100%; max-height: 96px; object-fit: contain; }
 .global-emote-name { font-size: 12px; overflow-wrap: anywhere; }
-.global-emote-author { font-size: 11px; color: var(--cinemotes-brown); overflow-wrap: anywhere; }
+.global-emote-consumer { font-size: 11px; color: var(--cinemotes-brown); overflow-wrap: anywhere; }
 .global-emotes-count { color: var(--cinemotes-brown); font-size: 12px; }
 .global-emotes-status { text-align: center; padding: 40px 16px; color: var(--cinemotes-brown); }
 @media (max-width: 900px) { .global-emotes-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
@@ -162,6 +162,48 @@ footer > span:last-child > span { color: var(--cinemotes-gold); }
 @media (max-width: 360px) { .global-emotes-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* Shared top navigation */
+/* Image selection and compact preview shared by the emote forms. */
+.emote-image-picker { margin: 0 0 24px; padding: 0; border-radius: 14px; color: var(--cinemotes-ink); min-width: 0; }
+.emote-image-picker.is-loaded { padding: 12px; background: var(--cinemotes-background); }
+.emote-image-file-input { display: none; }
+.emote-image-label { margin: 0 0 10px; font-size: 12px; font-weight: 600; }
+.emote-image-label > span { color: inherit; }
+.emote-image-tabs { display: flex; gap: 5px; margin-bottom: 16px; padding: 5px; border: 1px solid var(--cinemotes-border); border-radius: 12px; background: var(--cinemotes-background); }
+.emote-image-tabs .MuiButton-root { flex: 1; border: 0; border-radius: 8px; padding: 9px 12px; min-height: 40px; font-size: 13px; font-weight: 500; background: transparent; color: var(--cinemotes-brown); transition: background-color .15s, color .15s; }
+.emote-image-tabs .MuiButton-root:hover { background: var(--cinemotes-tint); color: var(--cinemotes-ink); }
+.emote-image-tabs .MuiButton-root[aria-pressed="true"] { background: var(--cinemotes-yellow); color: #3A1800; font-weight: 700; }
+.emote-image-tabs .MuiButton-root[aria-pressed="true"]:hover { background: #FEDE00; }
+.emote-image-tabs .MuiButton-root.Mui-focusVisible { outline: 2px solid var(--cinemotes-gold); outline-offset: 2px; }
+.emote-image-tabs .MuiButton-root.Mui-disabled { opacity: .5; }
+.emote-image-dropzone { min-height: 190px; padding: 20px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; border: 1px dashed var(--cinemotes-gold); border-radius: 11px; background: var(--cinemotes-background); text-align: center; transition: background-color .15s, border-color .15s, box-shadow .15s; }
+.emote-image-picker.is-dragging .emote-image-dropzone { border-color: var(--cinemotes-yellow); border-style: solid; background: var(--cinemotes-tint); box-shadow: inset 0 0 0 1px var(--cinemotes-yellow); }
+.emote-image-picker.is-loaded.is-dragging { outline: 2px solid var(--cinemotes-gold); outline-offset: 3px; background: var(--cinemotes-tint); }
+.emote-image-dropzone > svg { color: var(--cinemotes-yellow); }
+.emote-image-dropzone > span { font-size: 14px; }
+.emote-image-dropzone > small { font-size: 12px; color: var(--cinemotes-brown); }
+.emote-image-dropzone .MuiButton-root { padding: 9px 18px; }
+.emote-image-url { display: flex; flex-direction: column; gap: 8px; }
+.emote-image-url > label { font-size: 12px; font-weight: 600; }
+.emote-image-url-controls { display: flex; align-items: stretch; gap: 8px; }
+.emote-image-url-controls > .MuiTextField-root { flex: 1; min-width: 0; }
+.emote-image-verify.MuiButton-root { flex-shrink: 0; white-space: nowrap; font-size: 12px; }
+@media (max-width: 480px) { .emote-image-url-controls { flex-wrap: wrap; } .emote-image-url-controls > .MuiTextField-root { flex-basis: 100%; } .emote-image-verify.MuiButton-root { margin-left: auto; } }
+.emote-image-limits { display: flex; gap: 7px; align-items: flex-start; margin: 12px 0 0; font-size: 11px; line-height: 1.5; color: var(--cinemotes-brown); }
+.emote-image-limits > svg { flex-shrink: 0; margin-top: 1px; }
+.emote-image-summary { display: flex; align-items: center; gap: 14px; }
+.emote-image-thumbnail { display: grid; place-items: center; flex: 0 0 86px; width: 86px; height: 86px; padding: 5px; border: 1px solid var(--cinemotes-border); border-radius: 11px; background: var(--cinemotes-background); }
+.emote-image-thumbnail img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 7px; }
+.emote-image-details { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.emote-image-status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.emote-image-status > svg { color: #29c878; width: 16px; height: 16px; flex-shrink: 0; }
+.emote-image-filename { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emote-image-metadata { font-size: 11px; color: var(--cinemotes-brown); }
+.emote-image-actions { display: flex; gap: 4px; flex-shrink: 0; align-self: flex-start; }
+.emote-image-actions .MuiIconButton-root { padding: 7px; border: 0; color: var(--cinemotes-brown); }
+.emote-image-actions .MuiIconButton-root:hover { background: var(--cinemotes-tint); color: var(--cinemotes-yellow); }
+.emote-image-actions .emote-image-remove.MuiIconButton-root:hover { color: #e57373; }
+@media (max-width: 480px) { .emote-image-thumbnail { flex-basis: 70px; width: 70px; height: 70px; } .emote-image-summary { gap: 10px; } .emote-image-tabs .MuiButton-root { font-size: 12px; padding-inline: 8px; } }
+
 .header { gap: 32px; height: auto; min-height: 90px; flex-wrap: wrap; padding-block: 14px; }
 .header .brand { flex-shrink: 0; }
 .header > .navigation { justify-content: flex-start; gap: 18px; flex: 1; min-width: 0; flex-wrap: wrap; }

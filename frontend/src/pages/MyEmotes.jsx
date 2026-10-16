@@ -3,6 +3,7 @@ import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
 import DeleteEmoteDialog from '../components/DeleteEmoteDialog.jsx'
 import CreatorEmoteDialog from '../components/CreatorEmoteDialog.jsx'
+import ToastSnackbar from '../components/ToastSnackbar.jsx'
 import ButtonBase from '@mui/material/ButtonBase'
 import EmoteTile from '../components/EmoteTile.jsx'
 import { useEffect, useState } from 'react'
@@ -59,7 +60,7 @@ export default function MyEmotes() {
   }, [invalidate, attempt])
   return <SiteLayout><main className="my-emotes-page" aria-label="Meus emotes">
     <div className="intro"><h1>Meus emotes</h1></div>
-    {success && <Alert severity="success" role="status">{success}</Alert>}
+    <ToastSnackbar message={success} severity="success" onClose={() => setSuccess('')} />
     <section className={`my-emotes-panel ${verified && emotes.length ? 'has-emotes' : ''}`} aria-label="Emotes do seu canal" aria-busy={!verified && !error}>
     {error ? <><Alert severity="error">{error}</Alert><Button onClick={() => { setError(''); setVerified(false); setAttempt((value) => value + 1) }}>Tentar novamente</Button></> : !verified && <p role="status">Carregando seus emotes…</p>}
     {verified && !error && (emotes.length

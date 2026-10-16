@@ -3,6 +3,8 @@
   "name": "cinemotes-ledger-api-local",
   "main": "src/index.js",
   "compatibility_date": "2026-10-13",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "r2_buckets": [{ "binding": "EMOTE_IMAGES", "bucket_name": "cinemotes-emotes-local" }],
   "dev": {
     "port": 8787
   },

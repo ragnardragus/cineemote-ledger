@@ -16,6 +16,8 @@ Configure `JWT_SECRET` em `.dev.vars`, usando `.dev.vars.example` como modelo. U
 
 A API local fica em `http://localhost:8787`. `GET /api/health` retorna `{ "status": "ok" }`.
 
+O comando de desenvolvimento inicia o Node com `--use-system-ca` para reconhecer os certificados confiáveis do sistema, inclusive em ambientes com inspeção HTTPS. A verificação TLS continua habilitada. Reinicie a API após atualizar esse script.
+
 | Comando | Finalidade |
 | --- | --- |
 | `npm run dev` | Inicia o Worker com `wrangler.local.jsonc`. |
@@ -31,12 +33,14 @@ Compile o frontend antes do build ou deploy do Worker: a configuração de produ
 
 ## Banco e migrações
 
+A migration `0020_unique_channel_names.sql` consolida nomes repetidos, remapeando emotes e usuários antes de remover canais duplicados. Ela prefere preservar o UUID vinculado ao criador e adiciona índices únicos para o nome normalizado e o dono do canal. IDs dos emotes/usuários e arquivos do R2 são preservados. Se dois criadores já estiverem vinculados ao mesmo nome, aborta com `conflicting_channel_owners`, sem escolher um dono automaticamente. Resolva os vínculos conflitantes antes de reaplicar; não apague registros para contornar o erro.
+
 `wrangler.local.jsonc` usa `cinemotes-ledger-dev`; os dados persistem em `.wrangler/state/`. `wrangler.jsonc` aponta para `cinemotes-ledger-prod`. Comandos `db:*` dos scripts usam o banco local; alterações remotas exigem `--remote` explicitamente.
 
 | Tabela | Campos e vínculos principais |
 | --- | --- |
 | `channels` | `id` UUID, `channelName`. |
-| `emotes` | `id` UUID, `emote_name`, `url`, `author`, `channelId` → `channels.id`. |
+| `emotes` | `id` UUID, `emote_name`, `url`, `consumer`, `createdWithUserCode`, `channelId` → `channels.id`. |
 | `Users` | `Id` UUID, `Username`, `PasswordHash`, `Role`, `Active`, `CreationDate`, `channelId` → `channels.id`. |
 | `UserCode` | `UUID`, `Status`, `CreationDate`, `Receiver`. |
 | `AuthSession` | `Id`, `UserId` → `Users.Id`, `ExpiresAt`. |
@@ -124,18 +128,19 @@ UserCode: <UUID do código>
 {
   "emote_name": "peepoHappy",
   "url": "https://example.com/peepoHappy.png",
-  "author": "Nome do autor",
   "channel": "MeuCanal"
 }
 ```
 
-Nome, URL e canal são obrigatórios; author assume texto vazio se omitido. A API busca o canal pelo nome, reutiliza um existente ou cria um UUID e um novo registro. Criação do canal, do emote e consumo do código acontecem na mesma transação, inclusive sob concorrência.
+Nome, URL e canal são obrigatórios. O consumer recebe o Receiver do UserCode. A API busca o canal pelo nome, reutiliza um existente ou cria um UUID e um novo registro. Criação do canal, do emote e consumo do código acontecem na mesma transação, inclusive sob concorrência.
 
-GlobalCE é reservado e não aceita novos emotes por esse cadastro. A API valida HTTP/HTTPS na URL, mas não baixa a imagem para verificar seu conteúdo.
+GlobalCE é reservado e não aceita novos emotes por esse cadastro. Antes de inserir ou atualizar uma URL, a API lê o arquivo em memória e verifica GIF, JPG/JPEG ou PNG pelos bytes, tamanho máximo de 1.048.576 bytes e dimensões de até 200 × 200 pixels. GIFs animados usam o tamanho total e as dimensões do canvas. Links sem extensão são aceitos se o conteúdo passar na validação.
+
+A busca tem timeout total de oito segundos, até três redirecionamentos e interrupção ao exceder o limite de bytes, mesmo sem Content-Length. Somente URLs públicas HTTP/HTTPS são aceitas; credenciais, portas alternativas, IPs literais e DNS que aponta para endereços privados são rejeitados. Cada redirecionamento é verificado novamente. O Worker usa global_fetch_strictly_public. Falhas retornam 400 sem alterar emotes, criar canais ou consumir UserCode. Edições sem URL não baixam a imagem novamente; registros antigos não são revalidados retroativamente. A imagem externa ainda pode mudar após a validação.
 
 ### Alteração e exclusão com UserCode
 
-PUT recebe `emote_name`, `url` e `channelId`; `author` é opcional. PATCH recebe pelo menos um desses campos, preservando os demais. O canal informado por UUID deve existir.
+PUT recebe `emote_name`, `url` e `channelId`; consumer e createdWithUserCode são definidos no cadastro e preservados nas edições. PATCH recebe pelo menos um desses campos, preservando os demais. O canal informado por UUID deve existir.
 
 Cada operação exige um UserCode com status `GENERATED`. Após uma alteração concluída, o código passa para `USED`. Falhas de validação e emotes inexistentes não consomem o código. Códigos usados, expirados ou inexistentes são rejeitados.
 
@@ -199,7 +204,7 @@ Todas as rotas exigem ADMIN. POST, PATCH e DELETE também exigem `X-Requested-Wi
 | PATCH | `/api/users/:id` | Edita nome, canal ou credencial. |
 | DELETE | `/api/users/:id` | Exclui somente criadores. |
 
-O cadastro recebe `username`, `role`, `salt` e `proof`; criadores também exigem `channelName`. O username aceita de 3 a 64 letras, números, pontos, traços ou sublinhados. A criação de usuário e canal é uma transação. Administradores não recebem canal.
+O cadastro recebe `username`, `role`, `salt` e `proof`; criadores também exigem `channelName`. O username aceita de 3 a 64 letras, números, pontos, traços ou sublinhados. Canais são únicos por nome, ignorando maiúsculas/minúsculas ASCII e espaços nas extremidades na comparação. Canal existente sem dono é reutilizado; novo canal é criado apenas quando o nome não existe. Canal de outro criador retorna 409, inclusive sob concorrência. Criação/vínculo de canal e usuário são uma transação. Administradores não recebem canal. Renomear para o nome de outro canal também retorna 409, sem mesclar dados.
 
 A edição aceita `username`, `channelName` e/ou o par `salt`/`proof`. Não aceita role ou channelId. Renomear o canal altera o registro já vinculado, preservando seu UUID e os vínculos dos emotes. Mudar nome ou senha revoga as sessões do usuário.
 
@@ -234,6 +239,8 @@ Testes unitários usam SQLite em memória; testes HTTP usam o runtime do Worker 
 A cobertura inclui autenticação, permissões por perfil/canal, tokens inválidos e revogados, CSRF, CRUD, consumo único de UserCodes, concorrência, filtros e migrações.
 
 ## Publicação na Cloudflare
+
+Para publicar com upload, aplique também `0019_emote_images.sql` no D1 remoto antes do deploy. `wrangler.jsonc` já vincula `EMOTE_IMAGES` ao bucket existente `cinemotes-emotes-prod`; não é necessário criar tokens S3 ou liberar acesso público ao bucket. O Worker entrega as imagens pela rota descrita abaixo.
 
 A configuração `wrangler.jsonc` publica API e SPA no Worker `cinemotes-ledger-api`, com binding `DB` para `cinemotes-ledger-prod`. Para outra conta ou banco, ajuste nome e identificador do D1 antes de publicar.
 
@@ -275,3 +282,23 @@ No Workers Builds, com raiz do repositório e branch `main`:
 - Deploy command: `cd functions && npx wrangler deploy`
 
 As migrações e o provisionamento são etapas separadas do build. `.dev.vars` e o banco local não são enviados à produção.
+
+## Identificação de quem cadastrou o emote
+
+A migration `0018_emotes_consumer.sql` substitui author por consumer obrigatório e adiciona createdWithUserCode. A API retorna true para cadastro por UserCode (consumer = Receiver) e false para cadastro por criador (consumer = Username). Esses campos não são aceitos no body e não mudam nas edições.
+
+Emotes anteriores recebem consumer = ragnardragus e createdWithUserCode = null, pois a origem histórica não foi registrada. IDs, canais, nomes e URLs são preservados. A migration precisa ser aplicada antes de publicar esta versão da API.
+
+## Upload e leitura de imagens no R2
+
+As mesmas rotas POST, PUT e PATCH de emotes aceitam `multipart/form-data`. Envie `emote_name`, `image` (arquivo), `channel` no cadastro com UserCode ou `channelId` nas alterações em que for necessário. O criador usa seu canal pela sessão. Envie **image ou url**, nunca ambos; campos consumer, createdWithUserCode e imageKey continuam internos e não são aceitos no formulário.
+
+A autorização é a mesma: UserCode GENERATED, consumido somente após salvar, ou sessão/JWT de criador para seu próprio canal. Arquivos são verificados pelos bytes: GIF, JPG/JPEG ou PNG, até 1.048.576 bytes e dimensões máximas de 200 × 200. O nome original e o MIME enviados pelo navegador não determinam a chave ou o formato; os objetos recebem `emotes/UUID.ext`.
+
+O binding local `EMOTE_IMAGES` usa `cinemotes-emotes-local`, simulado em `.wrangler/state/`, sem `remote: true`. Após `npm run db:migrate`, inicie API e frontend normalmente e escolha **Enviar arquivo**. Esse fluxo não toca no bucket de produção e não exige autenticação Cloudflare. Os testes usam D1 e R2 temporários isolados.
+
+Cada emote retorna em url um endereço absoluto no Worker, como `https://seu-worker.workers.dev/api/images/emotes/UUID.gif`. GET e HEAD são públicos, retornam o Content-Type real salvo, Content-Length, ETag, Cache-Control de 24 horas e CORS aberto para leitura por sites/extensões. If-None-Match retorna 304. A rota publica somente chaves vinculadas a um emote; não lista o bucket nem publica uploads incompletos. Cada requisição que chega à rota executa o Worker; o cache do navegador evita downloads repetidos. Uma cópia já armazenada em cache pode continuar visível até expirar após excluir o emote.
+
+Substituir ou excluir um emote remove seu arquivo gerenciado. Falhas ao gravar no D1 desfazem o upload; se a confirmação do banco se perder, a limpeza confere se o arquivo foi vinculado antes de removê-lo. Falhas de exclusão mantêm a reserva de espaço. Cadastros e edições disparam uma limpeza em segundo plano de até dez arquivos sem referência, com mais de uma hora, por operação. Não há job agendado: sem novas operações, pendências ficam aguardando.
+
+O teto interno é de **9.000.000.000 bytes**, reservado atomicamente no D1 antes do upload para suportar requisições concorrentes. O controle inclui arquivos em andamento e exclusões pendentes. Esse teto cobre **somente uploads feitos pela aplicação**; arquivos enviados pelo painel, outros buckets e operações de leitura/escrita não entram nessa soma. Portanto, ele não garante custo zero da conta. O GIF enviado manualmente ao bucket não é importado nem alterado automaticamente. Mantenha espaço de margem e acompanhe o consumo no painel do R2.

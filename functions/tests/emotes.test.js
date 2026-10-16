@@ -35,15 +35,18 @@ test('CRUD persiste dados e preserva os registros existentes', async () => {
   const route = `${path}/${emote.id}`
   try {
     assert.equal(created.headers.get('Location'), route)
-    assert.deepEqual(emote, { id: emote.id, emote_name: payload.emote_name, url: payload.url, author: '', channel: 'TestChannel' })
+    assert.deepEqual(emote, { id: emote.id, emote_name: payload.emote_name, url: payload.url, consumer: testReceiver, createdWithUserCode: true, channel: 'TestChannel' })
     assert.deepEqual(await (await request(route)).json(), emote)
     assert.ok((await (await request(path)).json()).some((item) => item.id === emote.id))
-    const patched = await request(route, 'PATCH', { author: 'Autor' })
+    const patched = await request(route, 'PATCH', { emote_name: 'Autor' })
     assert.equal(patched.status, 200)
-    assert.deepEqual(await patched.json(), { ...emote, author: 'Autor' })
-    const replaced = await request(route, 'PUT', { emote_name: 'changed', url: payload.url, author: 'Outro', channelId: '01952dac-b55c-4a28-8de1-efba3729bd96' })
+    assert.deepEqual(await patched.json(), { ...emote, emote_name: 'Autor' })
+    const replaced = await request(route, 'PUT', { emote_name: 'changed', url: payload.url, channelId: '01952dac-b55c-4a28-8de1-efba3729bd96' })
     assert.equal(replaced.status, 200)
-    assert.equal((await replaced.json()).emote_name, 'changed')
+    const updated = await replaced.json()
+    assert.equal(updated.emote_name, 'changed')
+    assert.equal(updated.consumer, testReceiver)
+    assert.equal(updated.createdWithUserCode, true)
     for (const invalid of [{}, { url: 'javascript:alert(1)' }, { author: null }, { id: 1 }, []]) {
       assert.equal((await request(route, 'PATCH', invalid)).status, 400)
     }
@@ -60,7 +63,7 @@ test('CRUD persiste dados e preserva os registros existentes', async () => {
 })
 
 test('rejeita JSON inválido, campos incorretos e IDs inválidos', async () => {
-  for (const body of [null, [], {}, { ...payload, url: 'invalid' }, { ...payload, channel: ' ' }, { ...payload, channel: 'x'.repeat(121) }, ...['Nome Canal', ' canal', 'canal ', 'canal_nome', 'canal-nome', 'canal.nome', 'canal@', 'canál', 'canal\nnome'].map((channel) => ({ ...payload, channel })), { ...payload, channelId: crypto.randomUUID() }, { ...payload, author: 1 }]) {
+  for (const body of [null, [], {}, { ...payload, url: 'invalid' }, { ...payload, channel: ' ' }, { ...payload, channel: 'x'.repeat(121) }, ...['Nome Canal', ' canal', 'canal ', 'canal_nome', 'canal-nome', 'canal.nome', 'canal@', 'canál', 'canal\nnome'].map((channel) => ({ ...payload, channel })), { ...payload, channelId: crypto.randomUUID() }, { ...payload, author: 1 }, { ...payload, consumer: 'forged' }, { ...payload, createdWithUserCode: false }]) {
     assert.equal((await request(path, 'POST', body)).status, 400)
   }
   const code = await (await api.fetch('/api/usecode/generate', { method: 'POST', headers: { ...adminHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ quantity: 1, receiver: testReceiver }) })).json()
@@ -109,8 +112,8 @@ test('UserCode autoriza uma única alteração e falhas não consomem o código'
     }
     const validationCode = await generate()
     assert.equal((await send(route, 'PATCH', validationCode, { url: 'invalid' })).status, 400)
-    assert.equal((await send(route, 'PATCH', validationCode, { author: 'Valid' })).status, 200)
-    assert.equal((await send(route, 'PATCH', validationCode, { author: 'Again' })).status, 403)
+    assert.equal((await send(route, 'PATCH', validationCode, { emote_name: 'Valid' })).status, 200)
+    assert.equal((await send(route, 'PATCH', validationCode, { emote_name: 'Again' })).status, 403)
 
     const missingCode = await generate()
     assert.equal((await send(`${path}/${crypto.randomUUID()}`, 'DELETE', missingCode)).status, 404)
@@ -132,6 +135,28 @@ test('UserCode autoriza uma única alteração e falhas não consomem o código'
     for (const id of ids) await request(`${path}/${id}`, 'DELETE')
   }
   assert.deepEqual(await (await request(path)).json(), before)
+})
+
+test('imagem rejeitada não cria canal, não altera emote e não consome UserCode', async () => {
+  const generated = await api.fetch('/api/usecode/generate', {
+    method: 'POST', headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quantity: 1, receiver: testReceiver }),
+  })
+  const code = (await generated.json()).UUIDs[0]
+  const send = (route, method, body) => api.fetch(route, { method, headers: { UserCode: code, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const channel = 'ImageValidationChannel'
+  for (const filename of ['oversize.png', 'large.png', 'not-image.png', 'missing.png', 'internal.png']) {
+    assert.equal((await send(path, 'POST', { ...payload, channel, url: `https://example.com/${filename}` })).status, 400)
+    assert.equal((await api.DB.prepare('SELECT Status FROM UserCode WHERE UUID = ?').bind(code).first()).Status, 'GENERATED')
+    assert.equal(await api.DB.prepare('SELECT id FROM channels WHERE channelName = ?').bind(channel).first(), null)
+  }
+  const existing = (await (await request(path)).json())[0]
+  for (const method of ['PATCH', 'PUT']) {
+    const channelId = (await api.DB.prepare('SELECT channelId FROM emotes WHERE id = ?').bind(existing.id).first()).channelId
+    assert.equal((await send(`${path}/${existing.id}`, method, { emote_name: existing.emote_name, channelId, url: 'https://example.com/oversize.png' })).status, 400)
+    assert.deepEqual(await (await request(`${path}/${existing.id}`)).json(), existing)
+    assert.equal((await api.DB.prepare('SELECT Status FROM UserCode WHERE UUID = ?').bind(code).first()).Status, 'GENERATED')
+  }
 })
 
 test('cadastro cria ou reutiliza canal por nome sem duplicar em requisições simultâneas', async () => {

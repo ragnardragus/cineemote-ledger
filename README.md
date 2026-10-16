@@ -11,6 +11,7 @@ Aplicação para organizar os emotes da comunidade Cinemotes e dos criadores do 
 - Perfis **Administrador** e **Criador**, com permissões verificadas pela API.
 - Temas claro e escuro, com escuro como padrão e preferência salva no navegador.
 - API com filtros por canal e persistência no Cloudflare D1; desenvolvimento com SQLite local do Wrangler.
+- Upload de GIF, JPG ou PNG para R2, com prévia, validação e entrega pública pelo Worker, mantendo o cadastro por URL.
 
 ## Perfis e fluxos
 
@@ -22,7 +23,7 @@ Aplicação para organizar os emotes da comunidade Cinemotes e dos criadores do 
 
 A página `/emotes/novo` sempre usa UserCode, mesmo com um criador logado. O cadastro por sessão acontece no modal de **Meus Emotes**. O criador autenticado não pode alterar emotes de outro canal ou de `GlobalCE`.
 
-No cadastro de um criador, um novo canal é criado e vinculado à conta. A edição do nome do canal preserva seu UUID. O perfil do usuário não pode ser alterado após o cadastro, e administradores não podem ser excluídos.
+No cadastro de um criador, um canal existente sem dono é vinculado à conta; se o nome não existir, um canal é criado. Canal de outro criador é bloqueado. Os nomes são únicos, ignorando maiúsculas/minúsculas ASCII. A edição preserva o UUID e não permite usar o nome de outro canal. O perfil do usuário é imutável, e administradores não podem ser excluídos.
 
 ## Estrutura
 
@@ -92,7 +93,7 @@ O frontend fica normalmente em `http://localhost:5173`, e a API em `http://local
 ## Dados e regras
 
 - **channels:** UUID e `channelName`. Novos nomes e renomeações aceitam de 1 a 120 letras ASCII e números, sem espaços, acentos ou símbolos.
-- **emotes:** UUID, nome, URL, autor e `channelId` relacionado ao canal. A API retorna o nome em `channel`.
+- **emotes:** UUID, nome, URL, `consumer`, `createdWithUserCode` e `channelId` relacionado ao canal. A API retorna o nome em `channel`.
 - **Users:** UUID, nome de usuário, verificador de senha, perfil, estado ativo, data de criação e canal opcional para criadores.
 - **UserCode:** UUID, status `GENERATED`, `USED` ou `EXPIRED`, data de criação e destinatário (`Receiver`).
 - **AuthSession / LoginThrottle:** sessões revogáveis e controle de tentativas de login.
@@ -124,6 +125,8 @@ npm run build --prefix functions
 O último comando é um **dry-run**: valida o Worker sem publicar. Os testes usam bancos isolados e não precisam da API de desenvolvimento em execução nem de credenciais reais.
 
 ## Cloudflare
+
+O upload usa o binding `EMOTE_IMAGES`: `cinemotes-emotes-local` simulado no desenvolvimento e `cinemotes-emotes-prod` em produção. A migration `0019_emote_images.sql` adiciona a referência do arquivo e o controle de espaço. Aplique as migrations antes do deploy. Não é necessário tornar o bucket público, cadastrar domínio ou criar chaves S3. Veja o [fluxo de upload](functions/README.md#upload-e-leitura-de-imagens-no-r2).
 
 `functions/wrangler.local.jsonc` aponta para o banco local. `functions/wrangler.jsonc` configura o Worker de produção, o binding `DB` e os arquivos estáticos de `frontend/dist`.
 

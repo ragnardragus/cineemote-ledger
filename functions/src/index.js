@@ -3,14 +3,18 @@ import emotes from './routes/emotes.js'
 import usecode from './routes/usecode.js'
 import auth from './routes/auth.js'
 import users from './routes/users.js'
+import images from './routes/images.js'
 import { secureHeaders } from 'hono/secure-headers'
 
 const app = new Hono()
-app.use('*', secureHeaders())
+app.use('*', (c, next) => secureHeaders({
+  crossOriginResourcePolicy: c.req.path.startsWith('/api/images/') ? 'cross-origin' : 'same-origin',
+})(c, next))
 
 app.get('/', (c) => c.json({ message: 'Hello World' }))
 app.get('/api/health', (c) => c.json({ status: 'ok' }))
 app.route('/api/emotes', emotes)
+app.route('/api/images', images)
 app.route('/api/usecode', usecode)
 app.route('/api/auth', auth)
 app.route('/api/users', users)

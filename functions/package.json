@@ -6,7 +6,7 @@
   "scripts": {
     "admin:provision": "node scripts/provision-admin.mjs",
     "test": "node --test",
-    "dev": "wrangler dev --config wrangler.local.jsonc",
+    "dev": "node --use-system-ca ./node_modules/wrangler/bin/wrangler.js dev --config wrangler.local.jsonc",
     "db:sql": "wrangler d1 execute DB --local --config wrangler.local.jsonc",
     "db:migration": "wrangler d1 migrations create DB --config wrangler.local.jsonc",
     "db:migrate": "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",

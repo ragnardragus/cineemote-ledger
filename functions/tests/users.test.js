@@ -97,3 +97,44 @@ test('cadastro rejeita perfis, credenciais e campos inválidos', async () => {
     assert.equal((await request('/api/users', 'POST', body)).status, 400)
   }
 })
+
+test('criador reutiliza canal livre; UserCode reutiliza canal vinculado; outro dono e renomeação duplicada são bloqueados', async () => {
+  const generated = await request('/api/usecode/generate', 'POST', { quantity: 2, receiver: 'ChannelReuseTest' })
+  const codes = (await generated.json()).UUIDs
+  const publicEmote = async (code, channel) => api.fetch('/api/emotes', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', UserCode: code },
+    body: JSON.stringify({ emote_name: 'PublicEmote', url: 'https://example.com/emote.png', channel }),
+  })
+  assert.equal((await publicEmote(codes[0], 'ClaimableChannel')).status, 201)
+  const original = await api.DB.prepare("SELECT id FROM channels WHERE channelName = 'ClaimableChannel'").first()
+  const created = await request('/api/users', 'POST', { ...payload, username: 'channel_owner', channelName: 'claimablechannel' })
+  assert.equal(created.status, 201)
+  const creator = await created.json()
+  assert.equal(creator.channelId, original.id)
+  assert.equal(creator.channelName, 'ClaimableChannel')
+  assert.equal((await publicEmote(codes[1], 'CLAIMABLECHANNEL')).status, 201)
+  assert.equal((await api.DB.prepare('SELECT COUNT(*) AS n FROM channels WHERE lower(channelName) = ?').bind('claimablechannel').first()).n, 1)
+  assert.equal((await api.DB.prepare('SELECT COUNT(*) AS n FROM emotes WHERE channelId = ?').bind(original.id).first()).n, 2)
+  assert.equal((await request('/api/users', 'POST', { ...payload, username: 'other_owner', channelName: 'CLAIMABLECHANNEL' })).status, 409)
+  const freeId = crypto.randomUUID()
+  await api.DB.prepare('INSERT INTO channels (id, channelName) VALUES (?, ?)').bind(freeId, 'AnotherFreeChannel').run()
+  assert.equal((await request(`/api/users/${creator.id}`, 'PATCH', { username: 'must_rollback', channelName: 'anotherfreechannel' })).status, 409)
+  const unchanged = await (await request(`/api/users/${creator.id}`)).json()
+  assert.equal(unchanged.username, 'channel_owner')
+  assert.equal(unchanged.channelId, original.id)
+  assert.equal((await request(`/api/users/${creator.id}`, 'PATCH', { channelName: 'CLAIMABLECHANNEL' })).status, 200)
+  assert.equal((await request(`/api/users/${creator.id}`, 'DELETE')).status, 204)
+  const reclaimed = await request('/api/users', 'POST', { ...payload, username: 'new_channel_owner', channelName: 'claimablechannel' })
+  assert.equal(reclaimed.status, 201)
+  assert.equal((await reclaimed.json()).channelId, original.id)
+})
+
+test('cadastros concorrentes não duplicam canal nem permitem dois donos', async () => {
+  const responses = await Promise.all([
+    request('/api/users', 'POST', { ...payload, username: 'race_owner_one', channelName: 'RaceChannel' }),
+    request('/api/users', 'POST', { ...payload, username: 'race_owner_two', channelName: 'racechannel' }),
+  ])
+  assert.deepEqual(responses.map((r) => r.status).sort(), [201, 409])
+  assert.equal((await api.DB.prepare("SELECT COUNT(*) AS n FROM channels WHERE lower(channelName) = 'racechannel'").first()).n, 1)
+  assert.equal((await api.DB.prepare("SELECT COUNT(*) AS n FROM Users JOIN channels ON channels.id = Users.channelId WHERE lower(channelName) = 'racechannel'").first()).n, 1)
+})

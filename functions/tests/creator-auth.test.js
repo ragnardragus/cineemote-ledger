@@ -67,10 +67,10 @@ test('meus emotes exige criador e lista somente o canal vinculado à conta', asy
   const emoteId = crypto.randomUUID()
   await api.DB.prepare('INSERT INTO channels (id, channelName) VALUES (?, ?)').bind(channelId, 'OwnCreatorChannel').run()
   await api.DB.prepare('UPDATE Users SET channelId = ? WHERE Id = ?').bind(channelId, creatorId).run()
-  await api.DB.prepare('INSERT INTO emotes (id, emote_name, url, channelId) VALUES (?, ?, ?, ?)').bind(emoteId, 'Own emote', 'https://example.com/emote.png', channelId).run()
+  await api.DB.prepare("INSERT INTO emotes (id, emote_name, url, channelId, consumer, createdWithUserCode) VALUES (?, ?, ?, ?, 'fixture', 0)").bind(emoteId, 'Own emote', 'https://example.com/emote.png', channelId).run()
   const response = await request('/api/emotes/mine?channel=GlobalCE', 'GET', undefined, cookie)
   assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), [{ id: emoteId, emote_name: 'Own emote', url: 'https://example.com/emote.png', author: '', channel: 'OwnCreatorChannel' }])
+  assert.deepEqual(await response.json(), [{ id: emoteId, emote_name: 'Own emote', url: 'https://example.com/emote.png', consumer: 'fixture', createdWithUserCode: false, channel: 'OwnCreatorChannel' }])
 })
 
 test('desativar criador invalida sua sessão e bloqueia novos logins', async () => {
