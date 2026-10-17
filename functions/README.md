@@ -85,6 +85,17 @@ Login, logout e alterações administrativas exigem `X-Requested-With: Cinemotes
 
 ## Emotes
 
+Administradores também gerenciam GlobalCE em rotas dedicadas:
+
+| Método | Rota | Operação |
+| --- | --- | --- |
+| GET | `/api/emotes/global` | Lista somente emotes globais; exige ADMIN. |
+| POST | `/api/emotes/global` | Cadastra por URL ou upload em GlobalCE. |
+| PUT / PATCH | `/api/emotes/global/:id` | Edita somente emotes do GlobalCE. |
+| DELETE | `/api/emotes/global/:id` | Exclui emote global e limpa arquivo gerenciado. |
+
+Escritas exigem sessão administrativa e `X-Requested-With: Cinemotes`. O canal vem do servidor; outro canal é bloqueado. Consumer recebe o Username atual do administrador no cadastro, createdWithUserCode fica false e nenhum código é consumido. Edições preservam consumer e origem. Sessão, perfil ativo e canal são conferidos também na instrução que grava no banco. Criadores e visitantes não têm acesso. O cadastro público com UserCode continua bloqueando GlobalCE. Não exige migration nova.
+
 | Método | Rota | Operação / sucesso |
 | --- | --- | --- |
 | GET | `/api/emotes` | Listagem pública; 200 com array. |

@@ -6,13 +6,17 @@ import CreatorEmoteDialog from '../components/CreatorEmoteDialog.jsx'
 import ToastSnackbar from '../components/ToastSnackbar.jsx'
 import ButtonBase from '@mui/material/ButtonBase'
 import EmoteTile from '../components/EmoteTile.jsx'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
 import { useAuth } from '../auth/context.js'
 import SiteLayout from '../components/SiteLayout.jsx'
 
-export default function MyEmotes() {
+export default function MyEmotes({ administrative = false }) {
+  const Layout = administrative ? Fragment : SiteLayout
+  const apiBase = administrative ? '/api/emotes/global' : '/api/emotes'
+  const listUrl = administrative ? apiBase : `${apiBase}/mine`
+  const title = administrative ? 'Emotes globais' : 'Meus emotes'
   const { invalidate } = useAuth()
   const [verified, setVerified] = useState(false)
   const [emotes, setEmotes] = useState([])
@@ -48,7 +52,7 @@ export default function MyEmotes() {
   const addButton = <ButtonBase tabIndex={-1} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') event.preventDefault() }} onClick={openDialog} className="add-emote-tile" aria-label="Cadastrar emote" title="Cadastrar emote"><svg viewBox="0 0 120 140" width="64" height="64" fill="none" stroke="currentColor" strokeWidth="8" strokeLinecap="round" aria-hidden="true"><path d="M60 18v104M12 70h96" /></svg></ButtonBase>
   useEffect(() => {
     const controller = new AbortController()
-    fetch('/api/emotes/mine', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) })
+    fetch(listUrl, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) })
       .then(async (response) => {
         if (response.status === 401 || response.status === 403) { invalidate(); return }
         if (!response.ok) throw new Error('Não foi possível carregar seus emotes.')
@@ -57,11 +61,11 @@ export default function MyEmotes() {
         if (!controller.signal.aborted) { setEmotes(data); setVerified(true) }
       }).catch((failure) => { if (!controller.signal.aborted) setError(failure.message) })
     return () => controller.abort()
-  }, [invalidate, attempt])
-  return <SiteLayout><main className="my-emotes-page" aria-label="Meus emotes">
-    <div className="intro"><h1>Meus emotes</h1></div>
+  }, [invalidate, attempt, listUrl])
+  return <Layout><main className="my-emotes-page" aria-label={title}>
+    <div className="intro"><h1>{title}</h1>{administrative && <p>Gerencie os emotes do canal GlobalCE.</p>}</div>
     <ToastSnackbar message={success} severity="success" onClose={() => setSuccess('')} />
-    <section className={`my-emotes-panel ${verified && emotes.length ? 'has-emotes' : ''}`} aria-label="Emotes do seu canal" aria-busy={!verified && !error}>
+    <section className={`my-emotes-panel ${verified && emotes.length ? 'has-emotes' : ''}`} aria-label={administrative ? 'Emotes do GlobalCE' : 'Emotes do seu canal'} aria-busy={!verified && !error}>
     {error ? <><Alert severity="error">{error}</Alert><Button onClick={() => { setError(''); setVerified(false); setAttempt((value) => value + 1) }}>Tentar novamente</Button></> : !verified && <p role="status">Carregando seus emotes…</p>}
     {verified && !error && (emotes.length
       ? <ul className="global-emotes-grid">{emotes.map((emote) => <EmoteTile key={emote.id} emote={emote} onClick={(event) => openEmoteMenu(event, emote)} menuOpen={menu?.emote.id === emote.id} />)}<li className="my-emotes-add-cell">{addButton}</li></ul>
@@ -80,7 +84,7 @@ export default function MyEmotes() {
         Excluir
       </MenuItem>
     </Menu>
-    {dialogOpen && <CreatorEmoteDialog key={editing?.id || 'new'} emote={editing} onClose={() => setDialogOpen(false)} onSaved={saved} />}
-    {deleting && <DeleteEmoteDialog emote={deleting} onClose={() => setDeleting(null)} onDeleted={deleted} />}
-  </main></SiteLayout>
+    {dialogOpen && <CreatorEmoteDialog key={editing?.id || 'new'} apiBase={apiBase} emote={editing} onClose={() => setDialogOpen(false)} onSaved={saved} />}
+    {deleting && <DeleteEmoteDialog apiBase={apiBase} emote={deleting} onClose={() => setDeleting(null)} onDeleted={deleted} />}
+  </main></Layout>
 }

@@ -8,7 +8,7 @@ import DialogContentText from '@mui/material/DialogContentText'
 import DialogActions from '@mui/material/DialogActions'
 import { useAuth } from '../auth/context.js'
 
-export default function DeleteEmoteDialog({ emote, onClose, onDeleted }) {
+export default function DeleteEmoteDialog({ emote, onClose, onDeleted, apiBase = '/api/emotes' }) {
   const { invalidate } = useAuth()
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
@@ -19,7 +19,7 @@ export default function DeleteEmoteDialog({ emote, onClose, onDeleted }) {
     if (submitting.current) return
     submitting.current = true; setDeleting(true); setError('')
     try {
-      const response = await fetch(`/api/emotes/${emote.id}`, {
+      const response = await fetch(`${apiBase}/${emote.id}`, {
         method: 'DELETE', credentials: 'same-origin',
         headers: { 'X-Requested-With': 'Cinemotes' }, signal: AbortSignal.timeout(15000),
       })

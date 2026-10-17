@@ -89,6 +89,7 @@ O frontend fica normalmente em `http://localhost:5173`, e a API em `http://local
 | `/admin/users/novo` | Cadastro de usuários. |
 | `/admin/users/:id/editar` | Edição de usuários. |
 | `/admin/emotes/novo` | Cadastro por UserCode no layout administrativo. |
+| `/admin/emotes/globais` | Gerenciamento de GlobalCE por administradores, sem UserCode. |
 
 ## Dados e regras
 

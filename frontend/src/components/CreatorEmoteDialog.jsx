@@ -9,7 +9,7 @@ import FormInput from './FormInput.jsx'
 import EmoteImagePicker from './EmoteImagePicker.jsx'
 import { useAuth } from '../auth/context.js'
 
-export default function CreatorEmoteDialog({ emote = null, onClose, onSaved }) {
+export default function CreatorEmoteDialog({ emote = null, onClose, onSaved, apiBase = '/api/emotes' }) {
   const { invalidate } = useAuth()
   const [form, setForm] = useState({ emote_name: emote?.emote_name || '', url: emote?.url || '' })
   const [saving, setSaving] = useState(false)
@@ -41,7 +41,7 @@ export default function CreatorEmoteDialog({ emote = null, onClose, onSaved }) {
         if (emote && body.url === emote.url) delete body.url
         requestBody = JSON.stringify(body)
       }
-      const response = await fetch(emote ? `/api/emotes/${emote.id}` : '/api/emotes', {
+      const response = await fetch(emote ? `${apiBase}/${emote.id}` : apiBase, {
         method: emote ? 'PATCH' : 'POST', credentials: 'same-origin',
         headers, body: requestBody, signal: AbortSignal.timeout(30000),
       })

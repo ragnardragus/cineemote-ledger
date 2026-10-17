@@ -32,6 +32,7 @@ export default function App() {
         <Route path="/admin/users/:id/editar" element={<UserForm />} />
         <Route path="/admin/usercodes" element={<UserCodesPage />} />
         <Route path="/admin/emotes/novo" element={<CreateEmote administrative />} />
+        <Route path="/admin/emotes/globais" element={<MyEmotes key="global-admin" administrative />} />
       </Route>
     </Route>
     <Route path="*" element={<SiteLayout><main><h1>Página não encontrada</h1><Link to="/">Voltar ao início</Link></main></SiteLayout>} />

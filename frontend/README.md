@@ -34,6 +34,7 @@ O build é gerado em `dist/`. O proxy de desenvolvimento encaminha `/api` para `
 | `/admin/users/novo` | Administrador | Formulário vazio para novo usuário. |
 | `/admin/users/:id/editar` | Administrador | Carrega e edita o usuário informado. |
 | `/admin/emotes/novo` | Administrador | Mesmo cadastro por UserCode. |
+| `/admin/emotes/globais` | Administrador | Grade e modais para cadastrar, editar e excluir emotes do GlobalCE por sessão. |
 
 As páginas são carregadas sob demanda. `RequireAdmin` e `RequireCreator` controlam a navegação; as permissões também são verificadas pelo backend.
 
@@ -79,6 +80,8 @@ Os formulários de cadastro público e o modal do criador oferecem **Usar link**
 A grade é atualizada ao concluir as operações. A abertura dos cartões de adicionar e de opções de emotes está configurada somente para clique, sem acionamento por Enter/Espaço ou foco por Tab. A galeria global usa os mesmos cards visuais, sem ações de edição.
 
 ## Administração
+
+O link **Gerenciar globais** abre `/admin/emotes/globais`. Compartilha a grade e os modais de Meus Emotes, usando `/api/emotes/global` como base. O canal fica fixo em GlobalCE, sem campo de canal ou UserCode; consumer é preenchido pela API com o administrador logado. Upload para R2, seleção por link, validações e toasts são os mesmos dos criadores. `/admin/emotes/novo` continua sendo o cadastro por UserCode para canais não globais.
 
 `Users` contém somente a listagem. O botão **+ Novo usuário** fica no cabeçalho do card. `UserForm` atende cadastro e edição em rotas separadas; salvar ou cancelar volta para a lista. Alterar nome ou senha da própria conta exige novo login.
 

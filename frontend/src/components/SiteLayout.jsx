@@ -13,6 +13,7 @@ export default function SiteLayout({ children, administrative = false }) {
         <NavLink className="header-nav-link" to="/emotes/globais">Emotes globais</NavLink>
         <NavLink className="header-nav-link" to={user?.role === 'ADMIN' ? '/admin/emotes/novo' : '/emotes/novo'}>Cadastrar Emote</NavLink>
         {user?.role === 'ADMIN' && <>
+          <NavLink className="header-nav-link" to="/admin/emotes/globais">Gerenciar globais</NavLink>
           <NavLink className="header-nav-link" to="/admin/usercodes">Gerar UserCode</NavLink>
           <NavLink className="header-nav-link" to="/admin/users">Usuários</NavLink>
         </>}

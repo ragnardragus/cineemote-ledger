@@ -4,11 +4,21 @@ import { storeImage, removeUnusedImage, cleanupImages } from '../emote-storage.j
 import { bodyLimit } from 'hono/body-limit'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
-import { requireCreator, requireSameOrigin } from '../auth/security.js'
+import { requireAdmin, requireCreator, requireSameOrigin } from '../auth/security.js'
 
 const emotes = new Hono()
 emotes.use('*', bodyLimit({ maxSize: MAX_IMAGE_BYTES + 65536, onError: (c) => c.json({ error: 'Envie uma imagem de até 1 MB.' }, 413) }))
 const fields = ['emote_name', 'url', 'channelId']
+
+async function requireGlobalWrite(c, next) {
+  return requireAdmin(c, () => requireSameOrigin(c, async () => {
+    const channel = await c.env.DB.prepare("SELECT id, channelName FROM channels WHERE lower(trim(channelName)) = 'globalce'").first()
+    if (!channel) throw new HTTPException(409, { message: 'Canal GlobalCE não encontrado. Confira as migrations.' })
+    c.set('globalAdmin', true)
+    c.set('creatorChannel', channel)
+    return next()
+  }))
+}
 
 async function requireEmoteWrite(c, next) {
   const code = c.req.header('UserCode')?.trim()
@@ -59,21 +69,22 @@ const registrationFields = (emote) => ({ ...emote, createdWithUserCode: emote.cr
 const emoteSelect = `SELECT emotes.id, emotes.emote_name, emotes.url, emotes.consumer, emotes.createdWithUserCode,
   channels.channelName AS channel FROM emotes JOIN channels ON channels.id = emotes.channelId`
 
-const creatorPermission = `EXISTS (SELECT 1 FROM Users
+const accountPermission = `EXISTS (SELECT 1 FROM Users
   JOIN AuthSession ON AuthSession.UserId = Users.Id
-  JOIN channels ON channels.id = Users.channelId
-  WHERE Users.Id = ? AND Users.channelId = ? AND Users.Active = 1 AND Users.Role = 'CREATOR'
+  JOIN channels ON channels.id = ?
+  WHERE Users.Id = ? AND Users.Active = 1
     AND AuthSession.Id = ? AND AuthSession.ExpiresAt > CAST(strftime('%s', 'now') AS INTEGER)
-    AND lower(trim(channels.channelName)) <> 'globalce')`
+    AND ((Users.Role = 'CREATOR' AND Users.channelId = channels.id AND lower(trim(channels.channelName)) <> 'globalce')
+      OR (Users.Role = 'ADMIN' AND lower(trim(channels.channelName)) = 'globalce')))`
 
 async function mutateAsCreator(c, sql, values) {
-  return c.env.DB.prepare(sql).bind(...values, c.get('user').id, c.get('creatorChannel').id, c.get('sessionId')).first()
+  return c.env.DB.prepare(sql).bind(...values, c.get('creatorChannel').id, c.get('user').id, c.get('sessionId')).first()
 }
 
 async function requireOwnEmote(c, id) {
   const record = await c.env.DB.prepare('SELECT channelId FROM emotes WHERE id = ?').bind(id).first()
   if (!record) throw new HTTPException(404, { message: 'Emote não encontrado' })
-  if (record.channelId !== c.get('creatorChannel').id) throw new HTTPException(403, { message: 'Você só pode gerenciar emotes do seu canal' })
+  if (record.channelId !== c.get('creatorChannel').id) throw new HTTPException(403, { message: c.get('globalAdmin') ? 'Esta rota gerencia somente emotes do GlobalCE' : 'Você só pode gerenciar emotes do seu canal' })
 }
 
 async function serializeEmote(c, emote) {
@@ -151,7 +162,7 @@ async function readBody(c, partial = false, creating = false) {
   }
   if (creating) {
     if (!isValidChannelName(body.channel)) badRequest(channelNameError)
-    if (body.channel.toLowerCase() === 'globalce') badRequest('Não é permitido cadastrar emotes no canal GlobalCE')
+    if (body.channel.toLowerCase() === 'globalce' && !c.get('globalAdmin')) badRequest('Não é permitido cadastrar emotes no canal GlobalCE')
   }
   if (Object.hasOwn(body, 'channelId')) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.channelId)) {
@@ -160,7 +171,7 @@ async function readBody(c, partial = false, creating = false) {
     body.channelId = body.channelId.toLowerCase()
     const channel = await c.env.DB.prepare('SELECT channelName FROM channels WHERE id = ?').bind(body.channelId).first()
     if (!channel) badRequest('Canal inexistente')
-    if (c.req.method === 'POST' && channel.channelName.trim().toLowerCase() === 'globalce') {
+    if (c.req.method === 'POST' && channel.channelName.trim().toLowerCase() === 'globalce' && !c.get('globalAdmin')) {
       badRequest('Não é permitido cadastrar emotes no canal GlobalCE')
     }
   }
@@ -202,6 +213,11 @@ emotes.get('/mine', requireCreator, async (c) => {
   return c.json(results.map(registrationFields))
 })
 
+emotes.get('/global', requireAdmin, async (c) => {
+  const { results } = await c.env.DB.prepare(`${emoteSelect} WHERE lower(trim(channels.channelName)) = 'globalce' ORDER BY emotes.id`).all()
+  return c.json(results.map(registrationFields))
+})
+
 emotes.get('/:id', async (c) => {
   const emote = await c.env.DB.prepare(`${emoteSelect} WHERE emotes.id = ?`).bind(getId(c)).first()
   return emote ? c.json(registrationFields(emote)) : c.json({ error: 'Emote não encontrado' }, 404)
@@ -237,7 +253,7 @@ async function withImage(c, body, action) {
 async function createEmote(c, body) {
   if (c.get('creatorChannel')) {
     const emote = await mutateAsCreator(c,
-      `INSERT INTO emotes (id, emote_name, url, consumer, createdWithUserCode, channelId, imageKey) SELECT ?, ?, ?, (SELECT Username FROM Users WHERE Id = ?), 0, ?, ? WHERE ${creatorPermission} RETURNING *`,
+      `INSERT INTO emotes (id, emote_name, url, consumer, createdWithUserCode, channelId, imageKey) SELECT ?, ?, ?, (SELECT Username FROM Users WHERE Id = ?), 0, ?, ? WHERE ${accountPermission} RETURNING *`,
       [crypto.randomUUID(), body.emote_name, body.url, c.get('user').id, c.get('creatorChannel').id, body.imageKey ?? null],
     )
     if (!emote) throw new HTTPException(403, { message: 'Permissão para cadastrar indisponível' })
@@ -266,6 +282,11 @@ emotes.post('/', requireEmoteWrite, async (c) => {
   return withImage(c, body, () => createEmote(c, body))
 })
 
+emotes.post('/global', requireGlobalWrite, async (c) => {
+  const body = await readBody(c, false, true)
+  return withImage(c, body, () => createEmote(c, body))
+})
+
 async function update(c, partial) {
   const id = getId(c)
   const body = await readBody(c, partial)
@@ -279,7 +300,7 @@ async function update(c, partial) {
     const keys = [...fields, 'imageKey'].filter((field) => Object.hasOwn(body, field))
     if (c.get('creatorChannel')) {
       const emote = await mutateAsCreator(c,
-        `UPDATE emotes SET ${keys.map((field) => `${field} = ?`).join(', ')} WHERE id = ? AND channelId = ? AND url = ? AND imageKey IS ? AND ${creatorPermission} RETURNING *`,
+        `UPDATE emotes SET ${keys.map((field) => `${field} = ?`).join(', ')} WHERE id = ? AND channelId = ? AND url = ? AND imageKey IS ? AND ${accountPermission} RETURNING *`,
         [...keys.map((field) => body[field]), id, c.get('creatorChannel').id, previous.url, previous.imageKey],
       )
       if (!emote) throw new HTTPException(403, { message: 'Permissão para alterar indisponível' })
@@ -298,13 +319,15 @@ async function update(c, partial) {
 
 emotes.put('/:id', requireEmoteWrite, (c) => update(c, false))
 emotes.patch('/:id', requireEmoteWrite, (c) => update(c, true))
+emotes.put('/global/:id', requireGlobalWrite, (c) => update(c, false))
+emotes.patch('/global/:id', requireGlobalWrite, (c) => update(c, true))
 
-emotes.delete('/:id', requireEmoteWrite, async (c) => {
+async function deleteEmote(c) {
   if (c.get('creatorChannel')) {
     const id = getId(c)
     await requireOwnEmote(c, id)
     const emote = await mutateAsCreator(c,
-      `DELETE FROM emotes WHERE id = ? AND channelId = ? AND ${creatorPermission} RETURNING id, imageKey`,
+      `DELETE FROM emotes WHERE id = ? AND channelId = ? AND ${accountPermission} RETURNING id, imageKey`,
       [id, c.get('creatorChannel').id],
     )
     if (!emote) throw new HTTPException(403, { message: 'Permissão para excluir indisponível' })
@@ -317,6 +340,9 @@ emotes.delete('/:id', requireEmoteWrite, async (c) => {
   )
   if (emote) await removeUnusedImage(c.env, emote.imageKey)
   return emote ? c.body(null, 204) : c.json({ error: 'Emote não encontrado' }, 404)
-})
+}
+
+emotes.delete('/:id', requireEmoteWrite, deleteEmote)
+emotes.delete('/global/:id', requireGlobalWrite, deleteEmote)
 
 export default emotes
